@@ -21,7 +21,7 @@ weight: 3
     - [Configuring the failure timeout](#configuring-the-failure-timeout)
   - [Using variable substitution](#using-variable-substitution)
   - [Using `Results`](#using-results)
-    - [Passing one Task's `Results` into the `Parameters` of another](#passing-one-tasks-results-into-the-parameters-of-another)
+    - [Passing one Task's `Results` into the `Parameters` of another](#passing-one-tasks-results-into-the-parameters-or-when-expressions-of-another)
     - [Emitting `Results` from a `Pipeline`](#emitting-results-from-a-pipeline)
   - [Configuring the `Task` execution order](#configuring-the-task-execution-order)
   - [Adding a description](#adding-a-description)
