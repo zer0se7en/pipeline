@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	errorutils "k8s.io/apimachinery/pkg/util/errors"
+	"knative.dev/pkg/kmeta"
 	"knative.dev/pkg/logging"
 )
 
@@ -54,7 +55,7 @@ func (c *Reconciler) createAffinityAssistants(ctx context.Context, wb []v1beta1.
 		if w.PersistentVolumeClaim != nil || w.VolumeClaimTemplate != nil {
 			affinityAssistantName := getAffinityAssistantName(w.Name, pr.Name)
 			_, err := c.KubeClientSet.AppsV1().StatefulSets(namespace).Get(ctx, affinityAssistantName, metav1.GetOptions{})
-			claimName := getClaimName(w, pr.GetOwnerReference())
+			claimName := getClaimName(w, *kmeta.NewControllerRef(pr))
 			switch {
 			case apierrors.IsNotFound(err):
 				affinityAssistantStatefulSet := affinityAssistantStatefulSet(affinityAssistantName, pr, claimName, c.Images.NopImage)
@@ -114,7 +115,7 @@ func getStatefulSetLabels(pr *v1beta1.PipelineRun, affinityAssistantName string)
 	for key, val := range pr.ObjectMeta.Labels {
 		labels[key] = val
 	}
-	labels[pipeline.GroupName+pipeline.PipelineRunLabelKey] = pr.Name
+	labels[pipeline.PipelineRunLabelKey] = pr.Name
 
 	// LabelInstance is used to configure PodAffinity for all TaskRuns belonging to this Affinity Assistant
 	// LabelComponent is used to configure PodAntiAffinity to other Affinity Assistants
@@ -180,7 +181,7 @@ func affinityAssistantStatefulSet(name string, pr *v1beta1.PipelineRun, claimNam
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            name,
 			Labels:          getStatefulSetLabels(pr, name),
-			OwnerReferences: []metav1.OwnerReference{pr.GetOwnerReference()},
+			OwnerReferences: []metav1.OwnerReference{*kmeta.NewControllerRef(pr)},
 		},
 		Spec: appsv1.StatefulSetSpec{
 			Replicas: &replicas,

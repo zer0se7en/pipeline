@@ -38,19 +38,19 @@ import (
 	k8sres "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes"
 	"knative.dev/pkg/apis"
 	knativetest "knative.dev/pkg/test"
 )
 
 var (
-	pipelineName       = "pipeline"
-	pipelineRunName    = "pipelinerun"
-	secretName         = "secret"
-	saName             = "service-account"
-	taskName           = "task"
-	task1Name          = "task1"
-	cond1Name          = "cond-1"
-	pipelineRunTimeout = 10 * time.Minute
+	pipelineName    = "pipeline"
+	pipelineRunName = "pipelinerun"
+	secretName      = "secret"
+	saName          = "service-account"
+	taskName        = "task"
+	task1Name       = "task1"
+	cond1Name       = "cond-1"
 )
 
 func TestPipelineRun(t *testing.T) {
@@ -91,6 +91,7 @@ func TestPipelineRun(t *testing.T) {
 		name: "service account propagation and pipeline param",
 		testSetup: func(ctx context.Context, t *testing.T, c *clients, namespace string, index int) {
 			t.Helper()
+			t.Skip("build-crd-testing project got removed, the secret-sauce doesn't exist anymore, skipping")
 			if _, err := c.KubeClient.CoreV1().Secrets(namespace).Create(ctx, getPipelineRunSecret(index, namespace), metav1.CreateOptions{}); err != nil {
 				t.Fatalf("Failed to create secret `%s`: %s", getName(secretName, index), err)
 			}
@@ -103,7 +104,7 @@ func TestPipelineRun(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: getName(taskName, index), Namespace: namespace},
 				Spec: v1beta1.TaskSpec{
 					Params: []v1beta1.ParamSpec{{
-						Name: "path", Type: v1beta1.ParamTypeString,
+						Name: "the.path", Type: v1beta1.ParamTypeString,
 					}, {
 						Name: "dest", Type: v1beta1.ParamTypeString,
 					}},
@@ -112,7 +113,7 @@ func TestPipelineRun(t *testing.T) {
 							Name:    "config-docker",
 							Image:   "gcr.io/tekton-releases/dogfooding/skopeo:latest",
 							Command: []string{"skopeo"},
-							Args:    []string{"copy", "$(params.path)", "$(params.dest)"},
+							Args:    []string{"copy", `$(params["the.path"])`, "$(params.dest)"},
 						}},
 					},
 				},
@@ -163,6 +164,7 @@ func TestPipelineRun(t *testing.T) {
 		name: "pipelinerun succeeds with LimitRange minimum in namespace",
 		testSetup: func(ctx context.Context, t *testing.T, c *clients, namespace string, index int) {
 			t.Helper()
+			t.Skip("build-crd-testing project got removed, the secret-sauce doesn't exist anymore, skipping")
 			if _, err := c.KubeClient.CoreV1().LimitRanges(namespace).Create(ctx, getLimitRange("prlimitrange", namespace, "100m", "99Mi", "100m"), metav1.CreateOptions{}); err != nil {
 				t.Fatalf("Failed to create LimitRange `%s`: %s", "prlimitrange", err)
 			}
@@ -179,7 +181,7 @@ func TestPipelineRun(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: getName(taskName, index), Namespace: namespace},
 				Spec: v1beta1.TaskSpec{
 					Params: []v1beta1.ParamSpec{{
-						Name: "path", Type: v1beta1.ParamTypeString,
+						Name: "the.path", Type: v1beta1.ParamTypeString,
 					}, {
 						Name: "dest", Type: v1beta1.ParamTypeString,
 					}},
@@ -188,7 +190,7 @@ func TestPipelineRun(t *testing.T) {
 							Name:    "config-docker",
 							Image:   "gcr.io/tekton-releases/dogfooding/skopeo:latest",
 							Command: []string{"skopeo"},
-							Args:    []string{"copy", "$(params.path)", "$(params.dest)"},
+							Args:    []string{"copy", `$(params["the.path"])`, `$(params["dest"])`},
 						}},
 					},
 				},
@@ -229,7 +231,7 @@ func TestPipelineRun(t *testing.T) {
 			}
 
 			t.Logf("Waiting for PipelineRun %s in namespace %s to complete", prName, namespace)
-			if err := WaitForPipelineRunState(ctx, c, prName, pipelineRunTimeout, PipelineRunSucceed(prName), "PipelineRunSuccess"); err != nil {
+			if err := WaitForPipelineRunState(ctx, c, prName, timeout, PipelineRunSucceed(prName), "PipelineRunSuccess"); err != nil {
 				t.Fatalf("Error waiting for PipelineRun %s to finish: %s", prName, err)
 			}
 
@@ -307,7 +309,7 @@ func getHelloWorldPipelineWithSingularTask(suffix int, namespace string) *v1beta
 		ObjectMeta: metav1.ObjectMeta{Name: getName(pipelineName, suffix), Namespace: namespace},
 		Spec: v1beta1.PipelineSpec{
 			Params: []v1beta1.ParamSpec{{
-				Name: "path", Type: v1beta1.ParamTypeString,
+				Name: "the.path", Type: v1beta1.ParamTypeString,
 			}, {
 				Name: "dest", Type: v1beta1.ParamTypeString,
 			}},
@@ -315,7 +317,7 @@ func getHelloWorldPipelineWithSingularTask(suffix int, namespace string) *v1beta
 				Name:    task1Name,
 				TaskRef: &v1beta1.TaskRef{Name: getName(taskName, suffix)},
 				Params: []v1beta1.Param{{
-					Name: "path", Value: *v1beta1.NewArrayOrString("$(params.path)"),
+					Name: "the.path", Value: *v1beta1.NewArrayOrString(`$(params["the.path"])`),
 				}, {
 					Name: "dest", Value: *v1beta1.NewArrayOrString("$(params.dest)"),
 				}},
@@ -380,7 +382,7 @@ spec:
 	}
 
 	t.Logf("Waiting for PipelineRun %s in namespace %s to complete", prName, namespace)
-	if err := WaitForPipelineRunState(ctx, c, prName, pipelineRunTimeout, Running(prName), "PipelineRunRunning"); err != nil {
+	if err := WaitForPipelineRunState(ctx, c, prName, timeout, Running(prName), "PipelineRunRunning"); err != nil {
 		t.Fatalf("Error waiting for PipelineRun %s to finish: %s", prName, err)
 	}
 
@@ -389,7 +391,7 @@ spec:
 	}
 
 	t.Logf("Waiting for PipelineRun %s in namespace %s to complete", prName, namespace)
-	if err := WaitForPipelineRunState(ctx, c, prName, pipelineRunTimeout, PipelineRunSucceed(prName), "PipelineRunSuccess"); err != nil {
+	if err := WaitForPipelineRunState(ctx, c, prName, timeout, PipelineRunSucceed(prName), "PipelineRunSuccess"); err != nil {
 		t.Fatalf("Error waiting for PipelineRun %s to finish: %s", prName, err)
 	}
 
@@ -449,7 +451,7 @@ func TestPipelineRunPending(t *testing.T) {
 	}
 
 	t.Logf("Waiting for PipelineRun %s in namespace %s to be marked pending", prName, namespace)
-	if err := WaitForPipelineRunState(ctx, c, prName, pipelineRunTimeout, PipelineRunPending(prName), "PipelineRunPending"); err != nil {
+	if err := WaitForPipelineRunState(ctx, c, prName, timeout, PipelineRunPending(prName), "PipelineRunPending"); err != nil {
 		t.Fatalf("Error waiting for PipelineRun %s to be marked pending: %s", prName, err)
 	}
 
@@ -471,7 +473,7 @@ func TestPipelineRunPending(t *testing.T) {
 	}
 
 	t.Logf("Waiting for PipelineRun %s in namespace %s to complete", prName, namespace)
-	if err := WaitForPipelineRunState(ctx, c, prName, pipelineRunTimeout, PipelineRunSucceed(prName), "PipelineRunSuccess"); err != nil {
+	if err := WaitForPipelineRunState(ctx, c, prName, timeout, PipelineRunSucceed(prName), "PipelineRunSuccess"); err != nil {
 		t.Fatalf("Error waiting for PipelineRun %s to finish: %s", prName, err)
 	}
 }
@@ -692,7 +694,7 @@ func getHelloWorldPipelineRun(suffix int, namespace string) *v1beta1.PipelineRun
 		Spec: v1beta1.PipelineRunSpec{
 			PipelineRef: &v1beta1.PipelineRef{Name: getName(pipelineName, suffix)},
 			Params: []v1beta1.Param{{
-				Name:  "path",
+				Name:  "the.path",
 				Value: *v1beta1.NewArrayOrString("docker://gcr.io/build-crd-testing/secret-sauce"),
 			}, {
 				Name:  "dest",
@@ -710,7 +712,7 @@ func getName(namespace string, suffix int) string {
 // collectMatchingEvents collects list of events under 5 seconds that match
 // 1. matchKinds which is a map of Kind of Object with name of objects
 // 2. reason which is the expected reason of event
-func collectMatchingEvents(ctx context.Context, kubeClient *knativetest.KubeClient, namespace string, kinds map[string][]string, reason string) ([]*corev1.Event, error) {
+func collectMatchingEvents(ctx context.Context, kubeClient kubernetes.Interface, namespace string, kinds map[string][]string, reason string) ([]*corev1.Event, error) {
 	var events []*corev1.Event
 
 	watchEvents, err := kubeClient.CoreV1().Events(namespace).Watch(ctx, metav1.ListOptions{})
@@ -760,7 +762,7 @@ func checkLabelPropagation(ctx context.Context, t *testing.T, c *clients, namesp
 		labels[key] = val
 	}
 	// This label is added to every PipelineRun by the PipelineRun controller
-	labels[pipeline.GroupName+pipeline.PipelineLabelKey] = p.Name
+	labels[pipeline.PipelineLabelKey] = p.Name
 	assertLabelsMatch(t, labels, pr.ObjectMeta.Labels)
 
 	// Check label propagation to TaskRuns.
@@ -768,7 +770,7 @@ func checkLabelPropagation(ctx context.Context, t *testing.T, c *clients, namesp
 		labels[key] = val
 	}
 	// This label is added to every TaskRun by the PipelineRun controller
-	labels[pipeline.GroupName+pipeline.PipelineRunLabelKey] = pr.Name
+	labels[pipeline.PipelineRunLabelKey] = pr.Name
 	if tr.Spec.TaskRef != nil {
 		task, err := c.TaskClient.Get(ctx, tr.Spec.TaskRef.Name, metav1.GetOptions{})
 		if err != nil {
@@ -778,7 +780,7 @@ func checkLabelPropagation(ctx context.Context, t *testing.T, c *clients, namesp
 			labels[key] = val
 		}
 		// This label is added to TaskRuns that reference a Task by the TaskRun controller
-		labels[pipeline.GroupName+pipeline.TaskLabelKey] = task.Name
+		labels[pipeline.TaskLabelKey] = task.Name
 	}
 	assertLabelsMatch(t, labels, tr.ObjectMeta.Labels)
 
@@ -788,7 +790,7 @@ func checkLabelPropagation(ctx context.Context, t *testing.T, c *clients, namesp
 		// Check label propagation to Pods.
 		pod := getPodForTaskRun(ctx, t, c.KubeClient, namespace, tr)
 		// This label is added to every Pod by the TaskRun controller
-		labels[pipeline.GroupName+pipeline.TaskRunLabelKey] = tr.Name
+		labels[pipeline.TaskRunLabelKey] = tr.Name
 		assertLabelsMatch(t, labels, pod.ObjectMeta.Labels)
 	}
 }
@@ -832,10 +834,10 @@ func checkAnnotationPropagation(ctx context.Context, t *testing.T, c *clients, n
 	assertAnnotationsMatch(t, annotations, pod.ObjectMeta.Annotations)
 }
 
-func getPodForTaskRun(ctx context.Context, t *testing.T, kubeClient *knativetest.KubeClient, namespace string, tr *v1beta1.TaskRun) *corev1.Pod {
+func getPodForTaskRun(ctx context.Context, t *testing.T, kubeClient kubernetes.Interface, namespace string, tr *v1beta1.TaskRun) *corev1.Pod {
 	// The Pod name has a random suffix, so we filter by label to find the one we care about.
 	pods, err := kubeClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: pipeline.GroupName + pipeline.TaskRunLabelKey + " = " + tr.Name,
+		LabelSelector: pipeline.TaskRunLabelKey + " = " + tr.Name,
 	})
 	if err != nil {
 		t.Fatalf("Couldn't get expected Pod for %s: %s", tr.Name, err)

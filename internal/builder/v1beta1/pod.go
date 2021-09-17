@@ -12,13 +12,13 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
 */
 
 package builder
 
 import (
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -123,15 +123,6 @@ func PodContainer(name, image string, ops ...ContainerOp) PodSpecOp {
 		c := &corev1.Container{
 			Name:  name,
 			Image: image,
-			// By default, containers request zero resources. Ops
-			// can override this.
-			Resources: corev1.ResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceCPU:              resource.MustParse("0"),
-					corev1.ResourceMemory:           resource.MustParse("0"),
-					corev1.ResourceEphemeralStorage: resource.MustParse("0"),
-				},
-			},
 		}
 		for _, op := range ops {
 			op(c)

@@ -87,13 +87,6 @@ func TestPod(t *testing.T) {
 			Containers: []corev1.Container{{
 				Name:  "nop",
 				Image: "nop:latest",
-				Resources: corev1.ResourceRequirements{
-					Requests: corev1.ResourceList{
-						corev1.ResourceCPU:              resource.MustParse("0"),
-						corev1.ResourceMemory:           resource.MustParse("0"),
-						corev1.ResourceEphemeralStorage: resource.MustParse("0"),
-					},
-				},
 			}},
 			InitContainers: []corev1.Container{{
 				Name:       "basic",

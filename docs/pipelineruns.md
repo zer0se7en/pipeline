@@ -246,6 +246,75 @@ case is when your CI system autogenerates `PipelineRuns` and it has `Parameters`
 provide to all `PipelineRuns`. Because you can pass in extra `Parameters`, you don't have to
 go through the complexity of checking each `Pipeline` and providing only the required params.
 
+#### Implicit Parameters
+
+**([alpha only](https://github.com/tektoncd/pipeline/blob/main/docs/install.md#alpha-features))**
+
+When using an inlined spec, parameters from the parent `PipelineRun` will be
+available to any inlined specs without needing to be explicitly defined. This
+allows authors to simplify specs by automatically propagating top-level
+parameters down to other inlined resources.
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: echo-
+spec:
+  params:
+    - name: MESSAGE
+      value: "Good Morning!"
+  pipelineSpec:
+    tasks:
+      - name: echo-message
+        taskSpec:
+          steps:
+            - name: echo
+              image: ubuntu
+              script: |
+                #!/usr/bin/env bash
+                echo "$(params.MESSAGE)"
+```
+
+On creation, this will resolve to a fully-formed spec and will be returned back
+to clients to avoid ambiguity:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  generateName: echo-
+spec:
+  params:
+  - name: MESSAGE
+    value: Good Morning!
+  pipelineSpec:
+    params:
+    - name: MESSAGE
+      type: string
+    tasks:
+    - name: echo-message
+      params:
+      - name: MESSAGE
+        value: $(params.MESSAGE)
+      taskSpec:
+        params:
+        - name: MESSAGE
+          type: string
+        spec: null
+        steps:
+        - name: echo
+          image: ubuntu
+          script: |
+            #!/usr/bin/env bash
+            echo "$(params.MESSAGE)"
+```
+
+Note that all implicit Parameters will be passed through to inlined resources
+(i.e. PipelineRun -> Pipeline -> Tasks) even if they are not used.
+Extra parameters passed this way should generally be safe (since they aren't
+actually used), but may result in more verbose specs being returned by the API.
+
 ### Specifying custom `ServiceAccount` credentials
 
 You can execute the `Pipeline` in your `PipelineRun` with a specific set of credentials by
@@ -396,15 +465,11 @@ Consult the documentation of the custom task that you are using to determine whe
 ### Specifying `LimitRange` values
 
 In order to only consume the bare minimum amount of resources needed to execute one `Step` at a
-time from the invoked `Task`, Tekton only requests the *maximum* values for CPU, memory, and ephemeral
-storage from within each `Step`. This is sufficient as `Steps` only execute one at a time in the `Pod`.
-Requests other than the maximum values are set to zero.
+time from the invoked `Task`, Tekton will request the compute values for CPU, memory, and ephemeral
+storage for each `Step` based on the [`LimitRange`](https://kubernetes.io/docs/concepts/policy/limit-range/)
+object(s), if present. Any `Request` or `Limit` specified by the user (on `Task` for example) will be left unchanged.
 
-When a [`LimitRange`](https://kubernetes.io/docs/concepts/policy/limit-range/) parameter is present in
-the namespace in which `PipelineRuns` are executing and *minimum* values are specified for container resource requests,
-Tekton searches through all `LimitRange` values present in the namespace and uses the *minimums* instead of 0.
-
-For more information, see the [`LimitRange` code example](../examples/v1beta1/pipelineruns/no-ci/limitrange.yaml).
+For more information, see the [`LimitRange` support in Pipeline](./limitrange.md).
 
 ### Configuring a failure timeout
 
@@ -414,7 +479,7 @@ If you set the timeout to 0, the `PipelineRun` fails immediately upon encounteri
 
 > :warning: ** `timeout`will be deprecated in future versions. Consider using `timeouts` instead.
 
-You can use the `timeouts` field to set the `PipelineRun's` desired timeout value in minutes.  There are three sub-fields than can be used to specify failures timeout for the entire pipeline, for tasks, and for finally tasks.  
+You can use the `timeouts` field to set the `PipelineRun's` desired timeout value in minutes.  There are three sub-fields than can be used to specify failures timeout for the entire pipeline, for tasks, and for `finally` tasks.
 
 ```yaml
 timeouts:
@@ -524,9 +589,9 @@ False|PipelineRunTimeout|Yes|The `PipelineRun` timed out.
 
 When a `PipelineRun` changes status, [events](events.md#pipelineruns) are triggered accordingly.
 
-When a `PipelineRun` has `Tasks` with [WhenExpressions](pipelines.md#guard-task-execution-using-whenexpressions):
-- If the `WhenExpressions` evaluate to `true`, the `Task` is executed then the `TaskRun` and its resolved `WhenExpressions` will be listed in the `Task Runs` section of the `status` of the `PipelineRun`.
-- If the `WhenExpressions` evaluate to `false`, the `Task` is skipped then its name and its resolved `WhenExpressions` will be listed in the `Skipped Tasks` section of the `status` of the `PipelineRun`.
+When a `PipelineRun` has `Tasks` with [`when` expressions](pipelines.md#guard-task-execution-using-when-expressions):
+- If the `when` expressions evaluate to `true`, the `Task` is executed then the `TaskRun` and its resolved `when` expressions will be listed in the `Task Runs` section of the `status` of the `PipelineRun`.
+- If the `when` expressions evaluate to `false`, the `Task` is skipped then its name and its resolved `when` expressions will be listed in the `Skipped Tasks` section of the `status` of the `PipelineRun`.
 
 ```yaml
 Conditions:
@@ -562,7 +627,9 @@ Task Runs:
 
 To cancel a `PipelineRun` that's currently executing, update its definition
 to mark it as "PipelineRunCancelled". When you do so, the spawned `TaskRuns` are also marked
-as cancelled and all associated `Pods` are deleted. Pending final tasks are not scheduled. 
+as cancelled, all associated `Pods` are deleted, and their `Retries` are not executed.
+Pending `finally` tasks are not scheduled.
+
 For example:
 
 ```yaml
@@ -575,7 +642,7 @@ spec:
   status: "PipelineRunCancelled"
 ```
 
-Warning: "PipelineRunCancelled" status is deprecated and would be removed in V1, please use "Cancelled" instead.  
+Warning: "PipelineRunCancelled" status is deprecated and would be removed in V1, please use "Cancelled" instead.
 
 ## Gracefully cancelling a `PipelineRun`
 
@@ -584,7 +651,9 @@ is currently an **_alpha feature_**.
 
 To gracefully cancel a `PipelineRun` that's currently executing, update its definition
 to mark it as "CancelledRunFinally". When you do so, the spawned `TaskRuns` are also marked
-as cancelled and all associated `Pods` are deleted. Final tasks are scheduled normally. 
+as cancelled, all associated `Pods` are deleted, and their `Retries` are not executed.
+`finally` tasks are scheduled normally.
+
 For example:
 
 ```yaml
@@ -602,7 +671,7 @@ spec:
 
 To gracefully stop a `PipelineRun` that's currently executing, update its definition
 to mark it as "StoppedRunFinally". When you do so, the spawned `TaskRuns` are completed normally,
-but no new non-final task is scheduled. Final tasks are executed afterwards.
+but no new non-`finally` task is scheduled. `finally` tasks are executed afterwards.
 For example:
 
 ```yaml

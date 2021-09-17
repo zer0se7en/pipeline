@@ -1262,6 +1262,22 @@ func TestValidatePipelineParameterVariables_Success(t *testing.T) {
 			}},
 		}},
 	}, {
+		name: "valid string parameter variables in input, array reference in values in when expression",
+		params: []ParamSpec{{
+			Name: "baz", Type: ParamTypeString,
+		}, {
+			Name: "foo", Type: ParamTypeArray, Default: &ArrayOrString{Type: ParamTypeArray, ArrayVal: []string{"anarray", "elements"}},
+		}},
+		tasks: []PipelineTask{{
+			Name:    "bar",
+			TaskRef: &TaskRef{Name: "bar-task"},
+			WhenExpressions: []WhenExpression{{
+				Input:    "$(params.baz)",
+				Operator: selection.In,
+				Values:   []string{"$(params.foo[*])"},
+			}},
+		}},
+	}, {
 		name: "valid array parameter variables",
 		params: []ParamSpec{{
 			Name: "baz", Type: ParamTypeArray, Default: &ArrayOrString{Type: ParamTypeArray, ArrayVal: []string{"some", "default"}},
@@ -1380,7 +1396,7 @@ func TestValidatePipelineParameterVariables_Failure(t *testing.T) {
 			Paths:   []string{"[0].when[0].input"},
 		},
 	}, {
-		name: "invalid string parameter variables in when expression, array reference in values",
+		name: "Invalid array parameter variable in when expression, array reference in input with array notation [*]",
 		params: []ParamSpec{{
 			Name: "foo", Type: ParamTypeArray, Default: &ArrayOrString{Type: ParamTypeArray, ArrayVal: []string{"anarray", "elements"}},
 		}},
@@ -1388,14 +1404,14 @@ func TestValidatePipelineParameterVariables_Failure(t *testing.T) {
 			Name:    "bar",
 			TaskRef: &TaskRef{Name: "bar-task"},
 			WhenExpressions: []WhenExpression{{
-				Input:    "bax",
+				Input:    "$(params.foo)[*]",
 				Operator: selection.In,
-				Values:   []string{"$(params.foo)"},
+				Values:   []string{"$(params.foo[*])"},
 			}},
 		}},
 		expectedError: apis.FieldError{
-			Message: `variable type invalid in "$(params.foo)"`,
-			Paths:   []string{"[0].when[0].values"},
+			Message: `variable type invalid in "$(params.foo)[*]"`,
+			Paths:   []string{"[0].when[0].input"},
 		},
 	}, {
 		name: "invalid pipeline task with a parameter combined with missing param from the param declarations",
@@ -1969,10 +1985,13 @@ func TestValidatePipelineWithFinalTasks_Failure(t *testing.T) {
 				}},
 			},
 		},
-		expectedError: apis.FieldError{
+		expectedError: *apis.ErrGeneric("").Also(&apis.FieldError{
 			Message: `invalid value: no runAfter allowed under spec.finally, final task final-task-1 has runAfter specified`,
 			Paths:   []string{"spec.finally[0]"},
-		},
+		}).Also(&apis.FieldError{
+			Message: `invalid value: no conditions allowed under spec.finally, final task final-task-2 has conditions specified`,
+			Paths:   []string{"spec.finally[1]"},
+		}),
 	}, {
 		name: "invalid pipeline - workspace bindings in final task relying on a non-existent pipeline workspace",
 		p: &Pipeline{
@@ -2154,8 +2173,26 @@ func TestValidateFinalTasks_Failure(t *testing.T) {
 			}},
 		}},
 		expectedError: apis.FieldError{
-			Message: `invalid value: invalid task result reference, final task param param1 has task result reference from a final task`,
-			Paths:   []string{"finally[1].params"},
+			Message: `invalid value: invalid task result reference, final task has task result reference from a final task final-task-1`,
+			Paths:   []string{"finally[1].params[param1].value"},
+		},
+	}, {
+		name: "invalid pipeline with final tasks having task results reference from a final task",
+		finalTasks: []PipelineTask{{
+			Name:    "final-task-1",
+			TaskRef: &TaskRef{Name: "final-task"},
+		}, {
+			Name:    "final-task-2",
+			TaskRef: &TaskRef{Name: "final-task"},
+			WhenExpressions: WhenExpressions{{
+				Input:    "$(tasks.final-task-1.results.output)",
+				Operator: selection.In,
+				Values:   []string{"result"},
+			}},
+		}},
+		expectedError: apis.FieldError{
+			Message: `invalid value: invalid task result reference, final task has task result reference from a final task final-task-1`,
+			Paths:   []string{"finally[1].when[0]"},
 		},
 	}, {
 		name: "invalid pipeline with final tasks having task results reference from non existent dag task",
@@ -2167,8 +2204,8 @@ func TestValidateFinalTasks_Failure(t *testing.T) {
 			}},
 		}},
 		expectedError: apis.FieldError{
-			Message: `invalid value: invalid task result reference, final task param param1 has task result reference from a task which is not defined in the pipeline`,
-			Paths:   []string{"finally[0].params"},
+			Message: `invalid value: invalid task result reference, final task has task result reference from a task no-dag-task-1 which is not defined in the pipeline`,
+			Paths:   []string{"finally[0].params[param1].value"},
 		},
 	}}
 	for _, tt := range tests {

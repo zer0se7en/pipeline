@@ -40,8 +40,6 @@ spec:
       app.kubernetes.io/part-of: tekton-pipelines
   template:
     metadata:
-      annotations:
-        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
       labels:
         app.kubernetes.io/name: webhook
         app.kubernetes.io/component: webhook
@@ -102,6 +100,8 @@ spec:
           value: config-observability
         - name: CONFIG_LEADERELECTION_NAME
           value: config-leader-election
+        - name: CONFIG_FEATURE_FLAGS_NAME
+          value: feature-flags
         - name: WEBHOOK_SERVICE_NAME
           value: tekton-pipelines-webhook
         - name: WEBHOOK_SECRET_NAME

@@ -20,8 +20,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"reflect"
 	"testing"
 	"time"
@@ -84,6 +86,13 @@ func TestEntrypointerFailures(t *testing.T) {
 				fr = &fakeRunner{}
 			}
 			fpw := &fakePostWriter{}
+			terminationPath := "termination"
+			if terminationFile, err := ioutil.TempFile("", "termination"); err != nil {
+				t.Fatalf("unexpected error creating temporary termination file: %v", err)
+			} else {
+				terminationPath = terminationFile.Name()
+				defer os.Remove(terminationFile.Name())
+			}
 			err := Entrypointer{
 				Entrypoint:      "echo",
 				WaitFiles:       c.waitFiles,
@@ -92,7 +101,7 @@ func TestEntrypointerFailures(t *testing.T) {
 				Waiter:          fw,
 				Runner:          fr,
 				PostWriter:      fpw,
-				TerminationPath: "termination",
+				TerminationPath: terminationPath,
 				Timeout:         &c.timeout,
 			}.Go()
 			if err == nil {
@@ -118,8 +127,9 @@ func TestEntrypointerFailures(t *testing.T) {
 
 func TestEntrypointer(t *testing.T) {
 	for _, c := range []struct {
-		desc, entrypoint, postFile string
-		waitFiles, args            []string
+		desc, entrypoint, postFile, stepDir, stepDirLink string
+		waitFiles, args                                  []string
+		breakpointOnFailure                              bool
 	}{{
 		desc: "do nothing",
 	}, {
@@ -145,20 +155,38 @@ func TestEntrypointer(t *testing.T) {
 	}, {
 		desc:      "multiple wait files",
 		waitFiles: []string{"waitforme", "metoo", "methree"},
+	}, {
+		desc:                "breakpointOnFailure to wait or not to wait ",
+		breakpointOnFailure: true,
+	}, {
+		desc:        "create a step path",
+		entrypoint:  "echo",
+		stepDir:     "step-one",
+		stepDirLink: "0",
 	}} {
 		t.Run(c.desc, func(t *testing.T) {
 			fw, fr, fpw := &fakeWaiter{}, &fakeRunner{}, &fakePostWriter{}
 			timeout := time.Duration(0)
+			terminationPath := "termination"
+			if terminationFile, err := ioutil.TempFile("", "termination"); err != nil {
+				t.Fatalf("unexpected error creating temporary termination file: %v", err)
+			} else {
+				terminationPath = terminationFile.Name()
+				defer os.Remove(terminationFile.Name())
+			}
 			err := Entrypointer{
-				Entrypoint:      c.entrypoint,
-				WaitFiles:       c.waitFiles,
-				PostFile:        c.postFile,
-				Args:            c.args,
-				Waiter:          fw,
-				Runner:          fr,
-				PostWriter:      fpw,
-				TerminationPath: "termination",
-				Timeout:         &timeout,
+				Entrypoint:          c.entrypoint,
+				WaitFiles:           c.waitFiles,
+				PostFile:            c.postFile,
+				Args:                c.args,
+				Waiter:              fw,
+				Runner:              fr,
+				PostWriter:          fpw,
+				TerminationPath:     terminationPath,
+				Timeout:             &timeout,
+				BreakpointOnFailure: c.breakpointOnFailure,
+				StepMetadataDir:     c.stepDir,
+				StepMetadataDirLink: c.stepDirLink,
 			}.Go()
 			if err != nil {
 				t.Fatalf("Entrypointer failed: %v", err)
@@ -200,7 +228,7 @@ func TestEntrypointer(t *testing.T) {
 			if c.postFile == "" && fpw.wrote != nil {
 				t.Errorf("Wrote post file when not required")
 			}
-			fileContents, err := ioutil.ReadFile("termination")
+			fileContents, err := ioutil.ReadFile(terminationPath)
 			if err == nil {
 				var entries []v1alpha1.PipelineResourceResult
 				if err := json.Unmarshal([]byte(fileContents), &entries); err == nil {
@@ -218,8 +246,121 @@ func TestEntrypointer(t *testing.T) {
 			} else if !os.IsNotExist(err) {
 				t.Error("Wanted termination file written, got nil")
 			}
-			if err := os.Remove("termination"); err != nil {
+			if err := os.Remove(terminationPath); err != nil {
 				t.Errorf("Could not remove termination path: %s", err)
+			}
+
+			if c.stepDir != "" {
+				if c.stepDir != *fpw.source {
+					t.Error("Wanted step path created, got nil")
+				}
+			}
+
+			if c.stepDirLink != "" {
+				if c.stepDirLink != *fpw.link {
+					t.Error("Wanted step path symbolic link created, got nil")
+				}
+			}
+		})
+	}
+}
+
+func TestEntrypointer_ReadBreakpointExitCodeFromDisk(t *testing.T) {
+	expectedExitCode := 1
+	// setup test
+	tmp, err := ioutil.TempFile("", "1*.err")
+	if err != nil {
+		t.Errorf("error while creating temp file for testing exit code written by breakpoint")
+	}
+	// write exit code to file
+	if err = ioutil.WriteFile(tmp.Name(), []byte(fmt.Sprintf("%d", expectedExitCode)), 0700); err != nil {
+		t.Errorf("error while writing to temp file create temp file for testing exit code written by breakpoint")
+	}
+	e := Entrypointer{}
+	// test reading the exit code from error waitfile
+	actualExitCode, err := e.BreakpointExitCode(tmp.Name())
+	if actualExitCode != expectedExitCode {
+		t.Errorf("error while parsing exit code. want %d , got %d", expectedExitCode, actualExitCode)
+	}
+}
+
+func TestEntrypointer_OnError(t *testing.T) {
+	for _, c := range []struct {
+		desc, postFile, onError string
+		runner                  Runner
+		expectedError           bool
+	}{{
+		desc:          "the step is exiting with 1, ignore the step error when onError is set to continue",
+		runner:        &fakeExitErrorRunner{},
+		postFile:      "step-one",
+		onError:       ContinueOnError,
+		expectedError: true,
+	}, {
+		desc:          "the step is exiting with 0, ignore the step error irrespective of no error with onError set to continue",
+		runner:        &fakeRunner{},
+		postFile:      "step-one",
+		onError:       ContinueOnError,
+		expectedError: false,
+	}, {
+		desc:          "the step is exiting with 1, treat the step error as failure with onError set to stopAndFail",
+		runner:        &fakeExitErrorRunner{},
+		expectedError: true,
+		postFile:      "step-one",
+		onError:       FailOnError,
+	}, {
+		desc:          "the step is exiting with 0, treat the step error (but there is none) as failure with onError set to stopAndFail",
+		runner:        &fakeRunner{},
+		postFile:      "step-one",
+		onError:       FailOnError,
+		expectedError: false,
+	}} {
+		t.Run(c.desc, func(t *testing.T) {
+			fpw := &fakePostWriter{}
+			terminationPath := "termination"
+			if terminationFile, err := ioutil.TempFile("", "termination"); err != nil {
+				t.Fatalf("unexpected error creating temporary termination file: %v", err)
+			} else {
+				terminationPath = terminationFile.Name()
+				defer os.Remove(terminationFile.Name())
+			}
+			err := Entrypointer{
+				Entrypoint:      "echo",
+				WaitFiles:       []string{},
+				PostFile:        c.postFile,
+				Args:            []string{"some", "args"},
+				Waiter:          &fakeWaiter{},
+				Runner:          c.runner,
+				PostWriter:      fpw,
+				TerminationPath: terminationPath,
+				OnError:         c.onError,
+			}.Go()
+
+			if c.expectedError && err == nil {
+				t.Fatalf("Entrypointer didn't fail")
+			}
+
+			if c.onError == ContinueOnError {
+				switch {
+				case fpw.wrote == nil:
+					t.Error("Wanted post file written, got nil")
+				case fpw.exitCodeFile == nil:
+					t.Error("Wanted exitCode file written, got nil")
+				case *fpw.wrote != c.postFile:
+					t.Errorf("Wrote post file %q, want %q", *fpw.wrote, c.postFile)
+				case *fpw.exitCodeFile != "exitCode":
+					t.Errorf("Wrote exitCode file %q, want %q", *fpw.exitCodeFile, "exitCode")
+				case c.expectedError && *fpw.exitCode == "0":
+					t.Errorf("Wrote zero exit code but want non-zero when expecting an error")
+				}
+			}
+
+			if c.onError == FailOnError {
+				switch {
+				case fpw.wrote == nil:
+					t.Error("Wanted post file written, got nil")
+				case c.expectedError && *fpw.wrote != c.postFile+".err":
+					t.Errorf("Wrote post file %q, want %q", *fpw.wrote, c.postFile+".err")
+				}
 			}
 		})
 	}
@@ -227,7 +368,7 @@ func TestEntrypointer(t *testing.T) {
 
 type fakeWaiter struct{ waited []string }
 
-func (f *fakeWaiter) Wait(file string, _ bool) error {
+func (f *fakeWaiter) Wait(file string, _ bool, _ bool) error {
 	f.waited = append(f.waited, file)
 	return nil
 }
@@ -239,13 +380,31 @@ func (f *fakeRunner) Run(ctx context.Context, args ...string) error {
 	return nil
 }
 
-type fakePostWriter struct{ wrote *string }
+type fakePostWriter struct {
+	wrote        *string
+	exitCodeFile *string
+	exitCode     *string
+	source       *string
+	link         *string
+}
 
-func (f *fakePostWriter) Write(file string) { f.wrote = &file }
+func (f *fakePostWriter) Write(file, content string) {
+	if content == "" {
+		f.wrote = &file
+	} else {
+		f.exitCodeFile = &file
+		f.exitCode = &content
+	}
+}
+
+func (f *fakePostWriter) CreateDirWithSymlink(source, link string) {
+	f.source = &source
+	f.link = &link
+}
 
 type fakeErrorWaiter struct{ waited *string }
 
-func (f *fakeErrorWaiter) Wait(file string, expectContent bool) error {
+func (f *fakeErrorWaiter) Wait(file string, expectContent bool, breakpointOnFailure bool) error {
 	f.waited = &file
 	return errors.New("waiter failed")
 }
@@ -275,4 +434,11 @@ func (f *fakeTimeoutRunner) Run(ctx context.Context, args ...string) error {
 		return errors.New("context deadline should have been set because of a timeout")
 	}
 	return errors.New("runner failed")
+}
+
+type fakeExitErrorRunner struct{ args *[]string }
+
+func (f *fakeExitErrorRunner) Run(ctx context.Context, args ...string) error {
+	f.args = &args
+	return exec.Command("ls", "/bogus/path").Run()
 }

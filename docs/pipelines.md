@@ -16,32 +16,32 @@ weight: 400
     - [Using the `from` parameter](#using-the-from-parameter)
     - [Using the `runAfter` parameter](#using-the-runafter-parameter)
     - [Using the `retries` parameter](#using-the-retries-parameter)
-    - [Guard `Task` execution using `WhenExpressions`](#guard-task-execution-using-whenexpressions)
+    - [Guard `Task` execution using `when` expressions](#guard-task-execution-using-when-expressions)
     - [Guard `Task` execution using `Conditions`](#guard-task-execution-using-conditions)
     - [Configuring the failure timeout](#configuring-the-failure-timeout)
   - [Using variable substitution](#using-variable-substitution)
     - [Using the `retries` and `retry-count` variable substitutions](#using-the-retries-and-retry-count-variable-substitutions)
   - [Using `Results`](#using-results)
-    - [Passing one Task's `Results` into the `Parameters` or `WhenExpressions` of another](#passing-one-tasks-results-into-the-parameters-or-whenexpressions-of-another)
+    - [Passing one Task's `Results` into the `Parameters` or `when` expressions of another](#passing-one-tasks-results-into-the-parameters-or-when-expressions-of-another)
     - [Emitting `Results` from a `Pipeline`](#emitting-results-from-a-pipeline)
   - [Configuring the `Task` execution order](#configuring-the-task-execution-order)
   - [Adding a description](#adding-a-description)
   - [Adding `Finally` to the `Pipeline`](#adding-finally-to-the-pipeline)
-    - [Specifying `Workspaces` in Final Tasks](#specifying-workspaces-in-final-tasks)
-    - [Specifying `Parameters` in Final Tasks](#specifying-parameters-in-final-tasks)
+    - [Specifying `Workspaces` in `finally` tasks](#specifying-workspaces-in-finally-tasks)
+    - [Specifying `Parameters` in `finally` tasks](#specifying-parameters-in-finally-tasks)
     - [Consuming `Task` execution results in `finally`](#consuming-task-execution-results-in-finally)
     - [`PipelineRun` Status with `finally`](#pipelinerun-status-with-finally)
     - [Using Execution `Status` of `pipelineTask`](#using-execution-status-of-pipelinetask)
     - [Using Aggregate Execution `Status` of All `Tasks`](#using-aggregate-execution-status-of-all-tasks)
-    - [Guard `Finally Task` execution using `WhenExpressions`](#guard-finally-task-execution-using-whenexpressions)
-      - [`WhenExpressions` using `Parameters` in `Finally Tasks`](#whenexpressions-using-parameters-in-finally-tasks)
-      - [`WhenExpressions` using `Results` in `Finally Tasks`](#whenexpressions-using-results-in-finally-tasks)
-      - [`WhenExpressions` using `Execution Status` of `PipelineTask` in `Finally Tasks`](#whenexpressions-using-execution-status-of-pipelinetask-in-finally-tasks)
-      - [`WhenExpressions` using `Aggregate Execution Status` of `Tasks` in `Finally Tasks`](#whenexpressions-using-aggregate-execution-status-of-tasks-in-finally-tasks)
+    - [Guard `finally` `task` execution using `when` expressions](#guard-finally-task-execution-using-when-expressions)
+      - [`when` expressions using `Parameters` in `finally` `tasks`](#when-expressions-using-parameters-in-finally-tasks)
+      - [`when` expressions using `Results` in `finally` `tasks`](#when-expressions-using-results-in-finally-tasks)
+      - [`when` expressions using `Execution Status` of `PipelineTask` in `finally` `tasks`](#when-expressions-using-execution-status-of-pipelinetask-in-finally-tasks)
+      - [`when` expressions using `Aggregate Execution Status` of `Tasks` in `finally` `tasks`](#when-expressions-using-aggregate-execution-status-of-tasks-in-finally-tasks)
     - [Known Limitations](#known-limitations)
-      - [Specifying `Resources` in Final Tasks](#specifying-resources-in-final-tasks)
-      - [Cannot configure the Final Task execution order](#cannot-configure-the-final-task-execution-order)
-      - [Cannot specify execution `Conditions` in Final Tasks](#cannot-specify-execution-conditions-in-final-tasks)
+      - [Specifying `Resources` in `finally` tasks](#specifying-resources-in-finally-tasks)
+      - [Cannot configure the `finally` task execution order](#cannot-configure-the-finally-task-execution-order)
+      - [Cannot specify execution `Conditions` in `finally` tasks](#cannot-specify-execution-conditions-in-finally-tasks)
       - [Cannot configure `Pipeline` result with `finally`](#cannot-configure-pipeline-result-with-finally)
   - [Using Custom Tasks](#using-custom-tasks)
     - [Specifying the target Custom Task](#specifying-the-target-custom-task)
@@ -409,18 +409,18 @@ tasks:
       name: build-push
 ```
 
-### Guard `Task` execution using `WhenExpressions`
+### Guard `Task` execution using `when` expressions
 
-To run a `Task` only when certain conditions are met, it is possible to _guard_ task execution using the `when` field. The `when` field allows you to list a series of references to `WhenExpressions`.
+To run a `Task` only when certain conditions are met, it is possible to _guard_ task execution using the `when` field. The `when` field allows you to list a series of references to `when` expressions.
 
-The components of `WhenExpressions` are `Input`, `Operator` and `Values`:
-- `Input` is the input for the `WhenExpression` which can be static inputs or variables ([`Parameters`](#specifying-parameters) or [`Results`](#using-results)). If the `Input` is not provided, it defaults to an empty string.
-- `Operator` represents an `Input`'s relationship to a set of `Values`. A valid `Operator` must be provided, which can be either `in` or `notin`.
-- `Values` is an array of string values. The `Values` array must be provided and be non-empty. It can contain static values or variables ([`Parameters`](#specifying-parameters), [`Results`](#using-results) or [a Workspaces's `bound` state](#specifying-workspaces)).
+The components of `when` expressions are `input`, `operator` and `values`:
+- `input` is the input for the `when` expression which can be static inputs or variables ([`Parameters`](#specifying-parameters) or [`Results`](#using-results)). If the `input` is not provided, it defaults to an empty string.
+- `operator` represents an `input`'s relationship to a set of `values`. A valid `operator` must be provided, which can be either `in` or `notin`.
+- `values` is an array of string values. The `values` array must be provided and be non-empty. It can contain static values or variables ([`Parameters`](#specifying-parameters), [`Results`](#using-results) or [a Workspaces's `bound` state](#specifying-workspaces)).
 
-The [`Parameters`](#specifying-parameters) are read from the `Pipeline` and [`Results`](#using-results) are read directly from previous [`Tasks`](#adding-tasks-to-the-pipeline). Using [`Results`](#using-results) in a `WhenExpression` in a guarded `Task` introduces a resource dependency on the previous `Task` that produced the `Result`.
+The [`Parameters`](#specifying-parameters) are read from the `Pipeline` and [`Results`](#using-results) are read directly from previous [`Tasks`](#adding-tasks-to-the-pipeline). Using [`Results`](#using-results) in a `when` expression in a guarded `Task` introduces a resource dependency on the previous `Task` that produced the `Result`.
 
-The declared `WhenExpressions` are evaluated before the `Task` is run. If all the `WhenExpressions` evaluate to `True`, the `Task` is run. If any of the `WhenExpressions` evaluate to `False`, the `Task` is not run and the `Task` is listed in the [`Skipped Tasks` section of the `PipelineRunStatus`](pipelineruns.md#monitoring-execution-status).
+The declared `when` expressions are evaluated before the `Task` is run. If all the `when` expressions evaluate to `True`, the `Task` is run. If any of the `when` expressions evaluate to `False`, the `Task` is not run and the `Task` is listed in the [`Skipped Tasks` section of the `PipelineRunStatus`](pipelineruns.md#monitoring-execution-status).
 
 In these examples, `first-create-file` task will only be executed if the `path` parameter is `README.md`, `echo-file-exists` task will only be executed if the `exists` result from `check-file` task is `yes` and `run-lint` task will only be executed if the `lint-config` optional workspace has been provided by a PipelineRun.
 
@@ -451,13 +451,22 @@ tasks:
         values: ["true"]
     taskRef:
       name: lint-source
+---
+tasks:
+  - name: deploy-in-blue
+    when:
+      - input: "blue"
+        operator: in
+        values: ["$(params.deployments[*])"]
+    taskRef:
+      name: deployment
 ```
 
-For an end-to-end example, see [PipelineRun with WhenExpressions](../examples/v1beta1/pipelineruns/pipelinerun-with-when-expressions.yaml).
+For an end-to-end example, see [PipelineRun with `when` expressions](../examples/v1beta1/pipelineruns/pipelinerun-with-when-expressions.yaml).
 
-When `WhenExpressions` are specified in a `Task`, [`Conditions`](#guard-task-execution-using-conditions) should not be specified in the same `Task`. The `Pipeline` will be rejected as invalid if both `WhenExpressions` and `Conditions` are included.
+When `when` expressions are specified in a `Task`, [`Conditions`](#guard-task-execution-using-conditions) should not be specified in the same `Task`. The `Pipeline` will be rejected as invalid if both `when` expressions and `Conditions` are included.
 
-There are a lot of scenarios where `WhenExpressions` can be really useful. Some of these are:
+There are a lot of scenarios where `when` expressions can be really useful. Some of these are:
 - Checking if the name of a git branch matches
 - Checking if the `Result` of a previous `Task` is as expected
 - Checking if a git file has changed in the previous commits
@@ -465,9 +474,229 @@ There are a lot of scenarios where `WhenExpressions` can be really useful. Some 
 - Checking if the name of a CI job matches
 - Checking if an optional Workspace has been provided
 
+#### Guarding a `Task` and its dependent `Tasks`
+
+When  `when` expressions evaluate to `False`, the `Task` and its dependent `Tasks` will be skipped by default while the
+rest of the `Pipeline` will execute. Dependencies between `Tasks` can be either ordering ([`runAfter`](https://github.com/tektoncd/pipeline/blob/main/docs/pipelines.md#using-the-runafter-parameter))
+or resource (e.g. [`Results`](https://github.com/tektoncd/pipeline/blob/main/docs/pipelines.md#using-results))
+dependencies, as further described in [configuring execution order](#configuring-the-task-execution-order). The global
+default scope of `when` expressions is set to a `Task` and its dependent`Tasks`; `scope-when-expressions-to-task` field
+in [`config/config-feature-flags.yaml`](install.md#customizing-the-pipelines-controller-behavior) defaults to "false".
+
+**Note:** Scoping `when` expressions to a `Task` and its dependent `Tasks` is deprecated
+
+To guard a `Task` and its dependent Tasks:
+- cascade the `when` expressions to the specific dependent `Tasks` to be guarded as well
+- compose the `Task` and its dependent `Tasks` as a unit to be guarded and executed together using `Pipelines` in `Pipelines`
+
+##### Cascade `when` expressions to the specific dependent `Tasks`
+
+Pick and choose which specific dependent `Tasks` to guard as well, and cascade the `when` expressions to those `Tasks`. 
+
+Taking the use case below, a user who wants to guard `manual-approval` and its dependent `Tasks`:
+
+```
+                                     tests
+                                       |
+                                       v
+                                 manual-approval
+                                 |            |
+                                 v        (approver)
+                            build-image       |
+                                |             v
+                                v          slack-msg
+                            deploy-image
+```
+
+The user can design the `Pipeline` to solve their use case as such:
+
+```yaml
+tasks:
+...
+- name: manual-approval
+  runAfter:
+    - tests
+  when:
+    - input: $(params.git-action)
+      operator: in
+      values:
+        - merge
+  taskRef:
+    name: manual-approval
+
+- name: build-image
+  when:
+    - input: $(params.git-action)
+      operator: in
+      values:
+        - merge
+  runAfter:
+    - manual-approval
+  taskRef:
+    name: build-image
+
+- name: deploy-image
+  when:
+    - input: $(params.git-action)
+      operator: in
+      values:
+        - merge
+  runAfter:
+    - build-image
+  taskRef:
+    name: deploy-image
+
+- name: slack-msg
+  params:
+    - name: approver
+      value: $(tasks.manual-approval.results.approver)
+  taskRef:
+    name: slack-msg
+```  
+
+##### Compose using Pipelines in Pipelines
+
+Compose a set of `Tasks` as a unit of execution using `Pipelines` in `Pipelines`, which allows for guarding a `Task` and 
+its dependent `Tasks` (as a sub-`Pipeline`) using `when` expressions. 
+
+**Note:** `Pipelines` in `Pipelines` is an [experimental feature](https://github.com/tektoncd/experimental/tree/main/pipelines-in-pipelines)
+
+Taking the use case below, a user who wants to guard `manual-approval` and its dependent `Tasks`:
+
+```
+                                     tests
+                                       |
+                                       v
+                                 manual-approval
+                                 |            |
+                                 v        (approver)
+                            build-image       |
+                                |             v
+                                v          slack-msg
+                            deploy-image
+```
+
+The user can design the `Pipelines` to solve their use case as such:
+
+```yaml
+## sub pipeline (approve-build-deploy-slack)
+tasks:
+  - name: manual-approval
+    runAfter:
+      - integration-tests
+    taskRef:
+      name: manual-approval
+
+  - name: build-image
+    runAfter:
+      - manual-approval
+    taskRef:
+      name: build-image
+
+  - name: deploy-image
+    runAfter:
+      - build-image
+    taskRef:
+      name: deploy-image
+
+  - name: slack-msg
+    params:
+      - name: approver
+        value: $(tasks.manual-approval.results.approver)
+    taskRef:
+      name: slack-msg
+      
+---
+## main pipeline
+tasks:
+...
+- name: approve-build-deploy-slack
+  runAfter:
+    - tests
+  when:
+    - input: $(params.git-action)
+      operator: in
+      values:
+        - merge
+  taskRef:
+    apiVersion: tekton.dev/v1beta1
+    kind: Pipeline
+    name: approve-build-deploy-slack
+```
+
+#### Guarding a `Task` only
+
+To guard a `Task` only and unblock execution of its dependent `Tasks`, set the global default scope of `when` expressions
+to `Task` using the `scope-when-expressions-to-task` field in [`config/config-feature-flags.yaml`](install.md#customizing-the-pipelines-controller-behavior)
+by changing it to "true"
+- The ordering-dependent `Tasks` will be executed
+- The resource-dependent `Tasks` (and their dependencies) will be skipped because of missing `Results` from the skipped 
+  parent `Task`. When we add support for [default `Results`](https://github.com/tektoncd/community/pull/240), then the 
+  resource-dependent `Tasks` may be executed if the default `Results` from the skipped parent `Task` are specified. In 
+  addition, if a resource-dependent `Task` needs a file from a guarded parent `Task` in a shared `Workspace`, make sure
+  to handle the execution of the child `Task` in case the expected file is missing from the `Workspace` because the 
+  guarded parent `Task` is skipped. 
+
+```
+                                     tests
+                                       |
+                                       v
+                                 manual-approval
+                                 |            |
+                                 v        (approver)
+                            build-image       |
+                                |             v
+                                v          slack-msg
+                            deploy-image
+```
+
+Taking the use case above, a user who wants to guard `manual-approval` only can design the `Pipeline` as such:
+
+```yaml
+tasks:
+...
+- name: manual-approval
+  runAfter:
+    - tests
+  when:
+    - input: $(params.git-action)
+      operator: in
+      values:
+        - merge
+  taskRef:
+    name: manual-approval
+
+- name: build-image
+  runAfter:
+    - manual-approval
+  taskRef:
+    name: build-image
+
+- name: deploy-image
+  runAfter:
+    - build-image
+  taskRef:
+    name: deploy-image
+
+- name: slack-msg
+  params:
+    - name: approver
+      value: $(tasks.manual-approval.results.approver)
+  taskRef:
+    name: slack-msg
+```
+
+With `when` expressions scoped to `Task`, if `manual-approval` is skipped, execution of it's dependent `Tasks` 
+(`slack-msg`, `build-image` and `deploy-image`) would be unblocked regardless:
+- `build-image` and `deploy-image` should be executed successfully
+- `slack-msg` will be skipped because it is missing the `approver` `Result` from `manual-approval`
+  - dependents of `slack-msg` would have been skipped too if it had any of them
+  - if `manual-approval` specifies a default `approver` `Result`, such as "None", then `slack-msg` would be executed 
+    ([supporting default `Results` is in progress](https://github.com/tektoncd/community/pull/240))
+
 ### Guard `Task` execution using `Conditions`
 
-**Note:** `Conditions` are [deprecated](./deprecations.md), use [`WhenExpressions`](#guard-task-execution-using-whenexpressions) instead.
+**Note:** `Conditions` are [deprecated](./deprecations.md), use [`when` expressions](#guard-task-execution-using-when-expressions) instead.
 
 To run a `Task` only when certain conditions are met, it is possible to _guard_ task execution using
 the `conditions` field. The `conditions` field allows you to list a series of references to
@@ -598,10 +827,10 @@ values aren't accessible for other `PipelineTask`s.
 Tasks can emit [`Results`](tasks.md#emitting-results) when they execute. A Pipeline can use these
 `Results` for two different purposes:
 
-1. A Pipeline can pass the `Result` of a `Task` into the `Parameters` or `WhenExpressions` of another.
+1. A Pipeline can pass the `Result` of a `Task` into the `Parameters` or `when` expressions of another.
 2. A Pipeline can itself emit `Results` and include data from the `Results` of its Tasks.
 
-### Passing one Task's `Results` into the `Parameters` or `WhenExpressions` of another
+### Passing one Task's `Results` into the `Parameters` or `when` expressions of another
 
 Sharing `Results` between `Tasks` in a `Pipeline` happens via
 [variable substitution](variables.md#variables-available-in-a-pipeline) - one `Task` emits
@@ -630,7 +859,7 @@ the receiving `Task` fails and causes the `Pipeline` to fail with `InvalidTaskRe
 unable to find result referenced by param 'foo' in 'task';: Could not find result with name 'commit' for task run 'checkout-source'
 ```
 
-In the snippet below, a `WhenExpression` is provided its value from the `exists` `Result` emitted by the
+In the snippet below, a `when` expression is provided its value from the `exists` `Result` emitted by the
 `check-file` `Task`. Tekton will make sure that the `check-file` `Task` runs before this one.
 
 ```yaml
@@ -691,10 +920,13 @@ so that one will run before another and the execution of the `Pipeline` progress
 without getting stuck in an infinite loop.
 
 This is done using:
-
-- [`from`](#using-the-from-parameter) clauses on the [`PipelineResources`](resources.md) used by each `Task`
-- [`runAfter`](#using-the-runafter-parameter) clauses on the corresponding `Tasks`
-- By linking the [`results`](#configuring-execution-results-at-the-pipeline-level) of one `Task` to the params of another
+- _resource dependencies_:
+  - [`from`](#using-the-from-parameter) clauses on the [`PipelineResources`](resources.md) used by each `Task`
+  - [`results`](#configuring-execution-results-at-the-pipeline-level) of one `Task` being pa `params` or
+    `when` expressions of another
+    
+- _ordering dependencies_:
+  - [`runAfter`](#using-the-runafter-parameter) clauses on the corresponding `Tasks`
 
 For example, the `Pipeline` defined as follows
 
@@ -783,9 +1015,9 @@ The `description` field is an optional field and can be used to provide descript
 
 ## Adding `Finally` to the `Pipeline`
 
-You can specify a list of one or more final tasks under `finally` section. Final tasks are guaranteed to be executed
-in parallel after all `PipelineTasks` under `tasks` have completed regardless of success or error. Final tasks are very
-similar to `PipelineTasks` under `tasks` section and follow the same syntax. Each final task must have a
+You can specify a list of one or more final tasks under `finally` section. `finally` tasks are guaranteed to be executed
+in parallel after all `PipelineTasks` under `tasks` have completed regardless of success or error. `finally` tasks are very
+similar to `PipelineTasks` under `tasks` section and follow the same syntax. Each `finally` task must have a
 [valid](https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names) `name` and a [taskRef or
 taskSpec](taskruns.md#specifying-the-target-task). For example:
 
@@ -801,11 +1033,11 @@ spec:
         name: cleanup
 ```
 
-### Specifying `Workspaces` in Final Tasks
+### Specifying `Workspaces` in `finally` tasks
 
-Finally tasks can specify [workspaces](workspaces.md) which `PipelineTasks` might have utilized
+`finally` tasks can specify [workspaces](workspaces.md) which `PipelineTasks` might have utilized
 e.g. a mount point for credentials held in Secrets. To support that requirement, you can specify one or more
-`Workspaces` in the `workspaces` field for the final tasks similar to `tasks`.
+`Workspaces` in the `workspaces` field for the `finally` tasks similar to `tasks`.
 
 ```yaml
 spec:
@@ -834,9 +1066,9 @@ spec:
           workspace: shared-workspace
 ```
 
-### Specifying `Parameters` in Final Tasks
+### Specifying `Parameters` in `finally` tasks
 
-Similar to `tasks`, you can specify [`Parameters`](tasks.md#specifying-parameters) in final tasks:
+Similar to `tasks`, you can specify [`Parameters`](tasks.md#specifying-parameters) in `finally` tasks:
 
 ```yaml
 spec:
@@ -855,7 +1087,7 @@ spec:
 
 ### Consuming `Task` execution results in `finally`
 
-Final tasks can be configured to consume `Results` of `PipelineTask` from the `tasks` section:
+`finally` tasks can be configured to consume `Results` of `PipelineTask` from the `tasks` section:
 
 ```yaml
 spec:
@@ -869,19 +1101,18 @@ spec:
         - name: commit
           value: $(tasks.clone-app-repo.results.commit)
 ```
-**Note:** The scheduling of such final task does not change, it will still be executed in parallel with other
-final tasks after all non-final tasks are done.
+**Note:** The scheduling of such `finally` task does not change, it will still be executed in parallel with other
+`finally` tasks after all non-`finally` tasks are done.
 
-The controller resolves task results before executing the finally task `discover-git-commit`. If the task
-`clone-app-repo` failed or skipped with [when expression](#guard-task-execution-using-whenexpressions) resulting in
-uninitialized task result `commit`, the finally Task `discover-git-commit` will be included in the list of
-`skippedTasks` and continues executing rest of the final tasks. The pipeline exits with `completion` instead of
-`success` if a finally task is added to the list of `skippedTasks`.
-
+The controller resolves task results before executing the `finally` task `discover-git-commit`. If the task
+`clone-app-repo` failed or skipped with [when expression](#guard-task-execution-using-when-expressions) resulting in
+uninitialized task result `commit`, the `finally` Task `discover-git-commit` will be included in the list of
+`skippedTasks` and continues executing rest of the `finally` tasks. The pipeline exits with `completion` instead of
+`success` if a `finally` task is added to the list of `skippedTasks`.
 
 ### `PipelineRun` Status with `finally`
 
-With `finally`, `PipelineRun` status is calculated based on `PipelineTasks` under `tasks` section and final tasks.
+With `finally`, `PipelineRun` status is calculated based on `PipelineTasks` under `tasks` section and `finally` tasks.
 
 Without `finally`:
 
@@ -893,20 +1124,20 @@ Without `finally`:
 
 With `finally`:
 
-| `PipelineTasks` under `tasks` | Final Tasks | `PipelineRun` status | Reason |
+| `PipelineTasks` under `tasks` | `finally` tasks | `PipelineRun` status | Reason |
 | ----------------------------- | ----------- | -------------------- | ------ |
-| all `PipelineTask` successful | all final tasks successful | `true` | `Succeeded` |
-| all `PipelineTask` successful | one or more failure of final tasks | `false` | `Failed` |
-| one or more `PipelineTask` [skipped](conditions.md) and rest successful | all final tasks successful | `true` | `Completed` |
-| one or more `PipelineTask` [skipped](conditions.md) and rest successful | one or more failure of final tasks | `false` | `Failed` |
-| single failure of `PipelineTask` | all final tasks successful | `false` | `failed` |
-| single failure of `PipelineTask` | one or more failure of final tasks | `false` | `failed` |
+| all `PipelineTask` successful | all `finally` tasks successful | `true` | `Succeeded` |
+| all `PipelineTask` successful | one or more failure of `finally` tasks | `false` | `Failed` |
+| one or more `PipelineTask` [skipped](conditions.md) and rest successful | all `finally` tasks successful | `true` | `Completed` |
+| one or more `PipelineTask` [skipped](conditions.md) and rest successful | one or more failure of `finally` tasks | `false` | `Failed` |
+| single failure of `PipelineTask` | all `finally` tasks successful | `false` | `failed` |
+| single failure of `PipelineTask` | one or more failure of `finally` tasks | `false` | `failed` |
 
 Overall, `PipelineRun` state transitioning is explained below for respective scenarios:
 
-* All `PipelineTask` and final tasks are successful: `Started` -> `Running` -> `Succeeded`
+* All `PipelineTask` and `finally` tasks are successful: `Started` -> `Running` -> `Succeeded`
 * At least one `PipelineTask` skipped and rest successful:  `Started` -> `Running` -> `Completed`
-* One `PipelineTask` failed / one or more final tasks failed: `Started` -> `Running` -> `Failed`
+* One `PipelineTask` failed / one or more `finally` tasks failed: `Started` -> `Running` -> `Failed`
 
 Please refer to the [table](pipelineruns.md#monitoring-execution-status) under Monitoring Execution Status to learn about
 what kind of events are triggered based on the `Pipelinerun` status.
@@ -980,16 +1211,16 @@ This kind of variable can have any one of the values from the following table:
 
 For an end-to-end example, see [`$(tasks.status)` usage in a `Pipeline`](../examples/v1beta1/pipelineruns/pipelinerun-task-execution-status.yaml).
 
-### Guard `Finally Task` execution using `WhenExpressions`
+### Guard `finally` `Task` execution using `when` expressions
 
-Similar to `Tasks`, `Finally Tasks` can be guarded using [`WhenExpressions`](#guard-task-execution-using-whenexpressions)
-that operate on static inputs or variables. Like in `Tasks`, `WhenExpressions` in `Finally Tasks` can operate on
-`Parameters` and `Results`. Unlike in `Tasks`, `WhenExpressions` in `Finally Tasks` can also operate on the [`Execution
+Similar to `Tasks`, `finally` `Tasks` can be guarded using [`when` expressions](#guard-task-execution-using-when-expressions)
+that operate on static inputs or variables. Like in `Tasks`, `when` expressions in `finally` `Tasks` can operate on
+`Parameters` and `Results`. Unlike in `Tasks`, `when` expressions in `finally` `tasks` can also operate on the [`Execution
 Status`](#using-execution-status-of-pipelinetask) of `Tasks`.
 
-#### `WhenExpressions` using `Parameters` in `Finally Tasks`
+#### `when` expressions using `Parameters` in `finally` `Tasks`
 
-`WhenExpressions` in `Finally Tasks` can utilize `Parameters` as demonstrated using [`golang-build`](https://github.com/tektoncd/catalog/tree/main/task/golang-build/0.1)
+`when` expressions in `finally` `Tasks` can utilize `Parameters` as demonstrated using [`golang-build`](https://github.com/tektoncd/catalog/tree/main/task/golang-build/0.1)
 and [`send-to-channel-slack`](https://github.com/tektoncd/catalog/tree/main/task/send-to-channel-slack/0.1) Catalog
 `Tasks`:
 
@@ -1026,9 +1257,9 @@ spec:
       value: true
 ```
 
-#### `WhenExpressions` using `Results` in `Finally Tasks`
+#### `when` expressions using `Results` in `finally` 'Tasks`
 
-`WhenExpressions` in `Finally Tasks` can utilize `Results`, as demonstrated using [`git-clone`](https://github.com/tektoncd/catalog/tree/main/task/git-clone/0.2)
+`when` expressions in `finally` `tasks` can utilize `Results`, as demonstrated using [`git-clone`](https://github.com/tektoncd/catalog/tree/main/task/git-clone/0.2)
 and [`github-add-comment`](https://github.com/tektoncd/catalog/tree/main/task/github-add-comment/0.2) Catalog `Tasks`:
 
 ```yaml
@@ -1058,13 +1289,13 @@ spec:
       value: 54dd3984affab47f3018852e61a1a6f9946ecfa
 ```
 
-If the `WhenExpressions` in a `Finally Task` use `Results` from a skipped or failed non-finally `Tasks`, then the
-`Finally Task` would also be skipped and be included in the list of `Skipped Tasks` in the `Status`, [similarly to when using
-`Results` in other parts of the `Finally Task`](#consuming-task-execution-results-in-finally).
+If the `when` expressions in a `finally` `task` use `Results` from a skipped or failed non-finally `Tasks`, then the
+`finally` `task` would also be skipped and be included in the list of `Skipped Tasks` in the `Status`, [similarly to when using
+`Results` in other parts of the `finally` `task`](#consuming-task-execution-results-in-finally).
 
-#### `WhenExpressions` using `Execution Status` of `PipelineTask` in `Finally Tasks`
+#### `when` expressions using `Execution Status` of `PipelineTask` in `finally` `tasks`
 
-`WhenExpressions` in `Finally Tasks` can utilize [`Execution Status` of `PipelineTasks`](#using-execution-status-of-pipelinetask),
+`when` expressions in `finally` `tasks` can utilize [`Execution Status` of `PipelineTasks`](#using-execution-status-of-pipelinetask),
 as demonstrated using [`golang-build`](https://github.com/tektoncd/catalog/tree/main/task/golang-build/0.1) and
 [`send-to-channel-slack`](https://github.com/tektoncd/catalog/tree/main/task/send-to-channel-slack/0.1) Catalog `Tasks`:
 
@@ -1091,11 +1322,11 @@ spec:
       # […]
 ```
 
-For an end-to-end example, see [PipelineRun with WhenExpressions](../examples/v1beta1/pipelineruns/pipelinerun-with-when-expressions.yaml).
+For an end-to-end example, see [PipelineRun with `when` expressions](../examples/v1beta1/pipelineruns/pipelinerun-with-when-expressions.yaml).
 
-#### `WhenExpressions` using `Aggregate Execution Status` of `Tasks` in `Finally Tasks`
+#### `when` expressions using `Aggregate Execution Status` of `Tasks` in `finally` `tasks`
 
-`WhenExpressions` in `Finally Tasks` can utilize
+`when` expressions in `finally` `tasks` can utilize
 [`Aggregate Execution Status` of `Tasks`](#using-aggregate-execution-status-of-all-tasks) as demonstrated:
 
 ```yaml
@@ -1109,15 +1340,15 @@ finally:
       name: notify-failure
 ```
 
-For an end-to-end example, see [PipelineRun with WhenExpressions](../examples/v1beta1/pipelineruns/pipelinerun-with-when-expressions.yaml).
+For an end-to-end example, see [PipelineRun with `when` expressions](../examples/v1beta1/pipelineruns/pipelinerun-with-when-expressions.yaml).
 
 ### Known Limitations
 
-#### Specifying `Resources` in Final Tasks
+#### Specifying `Resources` in `finally` tasks
 
 Similar to `tasks`, you can use [PipelineResources](#specifying-resources) as inputs and outputs for
-final tasks in the Pipeline. The only difference here is, final tasks with an input resource can not have a `from` clause
-like a `PipelineTask` from `tasks` section. For example:
+`finally` tasks in the Pipeline. The only difference here is, final tasks with an input resource can not have a `from`
+clause like a `PipelineTask` from `tasks` section. For example:
 
 ```yaml
 spec:
@@ -1144,21 +1375,21 @@ spec:
               - tests
 ```
 
-#### Cannot configure the Final Task execution order
+#### Cannot configure the `finally` task execution order
 
-It's not possible to configure or modify the execution order of the final tasks. Unlike `Tasks` in a `Pipeline`,
-all final tasks run simultaneously and start executing once all `PipelineTasks` under `tasks` have settled which means
-no `runAfter` can be specified in final tasks.
+It's not possible to configure or modify the execution order of the `finally` tasks. Unlike `Tasks` in a `Pipeline`,
+all `finally` tasks run simultaneously and start executing once all `PipelineTasks` under `tasks` have settled which means
+no `runAfter` can be specified in `finally` tasks.
 
-#### Cannot specify execution `Conditions` in Final Tasks
+#### Cannot specify execution `Conditions` in `finally` tasks
 
 `Tasks` in a `Pipeline` can be configured to run only if some conditions are satisfied using `conditions`. But the
-final tasks are guaranteed to be executed after all `PipelineTasks` therefore no `conditions` can be specified in
-final tasks.
+`finally` tasks are guaranteed to be executed after all `PipelineTasks` therefore no `conditions` can be specified in
+`finally` tasks.
 
 #### Cannot configure `Pipeline` result with `finally`
 
-Final tasks can emit `Results` but results emitted from the final tasks can not be configured in the
+`finally` tasks can emit `Results` but results emitted from the `finally` tasks can not be configured in the
 [Pipeline Results](#configuring-execution-results-at-the-pipeline-level). We are working on adding support for this
 (tracked in issue [#2710](https://github.com/tektoncd/pipeline/issues/2710)).
 
@@ -1294,7 +1525,7 @@ Pipelines do not support the following items with custom tasks:
 * Pipeline Resources
 * [`retries`](#using-the-retries-parameter)
 * [`timeout`](#configuring-the-failure-timeout)
-* Conditions (`Conditions` are deprecated.  Use [`WhenExpressions`](#guard-task-execution-using-whenexpressions) instead.)
+* Conditions (`Conditions` are deprecated.  Use [`when` expressions](#guard-task-execution-using-when-expressions) instead.)
 
 ## Code examples
 

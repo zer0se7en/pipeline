@@ -26,7 +26,6 @@ import (
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	"github.com/tektoncd/pipeline/pkg/reconciler/pipelinerun"
 	"github.com/tektoncd/pipeline/pkg/reconciler/taskrun"
-	"github.com/tektoncd/pipeline/pkg/version"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/rest"
 	filteredinformerfactory "knative.dev/pkg/client/injection/kube/informers/factory/filtered"
@@ -47,27 +46,31 @@ var (
 	gitImage                 = flag.String("git-image", "", "The container image containing our Git binary.")
 	kubeconfigWriterImage    = flag.String("kubeconfig-writer-image", "", "The container image containing our kubeconfig writer binary.")
 	shellImage               = flag.String("shell-image", "", "The container image containing a shell")
+	shellImageWin            = flag.String("shell-image-win", "", "The container image containing a windows shell")
 	gsutilImage              = flag.String("gsutil-image", "", "The container image containing gsutil")
 	prImage                  = flag.String("pr-image", "", "The container image containing our PR binary.")
 	imageDigestExporterImage = flag.String("imagedigest-exporter-image", "", "The container image containing our image digest exporter binary.")
 	namespace                = flag.String("namespace", corev1.NamespaceAll, "Namespace to restrict informer to. Optional, defaults to all namespaces.")
-	versionGiven             = flag.String("version", "devel", "Version of Tekton running")
 	threadsPerController     = flag.Int("threads-per-controller", controller.DefaultThreadsPerController, "Threads (goroutines) to create per controller")
 	disableHighAvailability  = flag.Bool("disable-ha", false, "Whether to disable high-availability functionality for this component.  This flag will be deprecated "+
 		"and removed when we have promoted this feature to stable, so do not pass it without filing an "+
 		"issue upstream!")
+	experimentalDisableInTreeResolution = flag.Bool(disableInTreeResolutionFlag, false,
+		"Disable resolution of taskrun and pipelinerun refs by the taskrun and pipelinerun reconcilers.")
+
+	disableInTreeResolutionFlag = "experimental-disable-in-tree-resolution"
 )
 
 func main() {
-	cfg := sharedmain.ParseAndGetConfigOrDie()
+	cfg := injection.ParseAndGetRESTConfigOrDie()
 	controller.DefaultThreadsPerController = *threadsPerController
-	version.SetVersion(*versionGiven)
 	images := pipeline.Images{
 		EntrypointImage:          *entrypointImage,
 		NopImage:                 *nopImage,
 		GitImage:                 *gitImage,
 		KubeconfigWriterImage:    *kubeconfigWriterImage,
 		ShellImage:               *shellImage,
+		ShellImageWin:            *shellImageWin,
 		GsutilImage:              *gsutilImage,
 		PRImage:                  *prImage,
 		ImageDigestExporterImage: *imageDigestExporterImage,
@@ -109,10 +112,20 @@ func main() {
 		log.Fatal(http.ListenAndServe(":"+port, mux))
 	}()
 
+	taskrunControllerConfig := taskrun.ControllerConfiguration{
+		Images:                   images,
+		DisableTaskRefResolution: *experimentalDisableInTreeResolution,
+	}
+
+	pipelinerunControllerConfig := pipelinerun.ControllerConfiguration{
+		Images:                       images,
+		DisablePipelineRefResolution: *experimentalDisableInTreeResolution,
+	}
+
 	ctx = filteredinformerfactory.WithSelectors(ctx, v1beta1.ManagedByLabelKey)
 	sharedmain.MainWithConfig(ctx, ControllerLogKey, cfg,
-		taskrun.NewController(*namespace, images),
-		pipelinerun.NewController(*namespace, images),
+		taskrun.NewController(*namespace, taskrunControllerConfig),
+		pipelinerun.NewController(*namespace, pipelinerunControllerConfig),
 	)
 }
 
