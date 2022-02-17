@@ -97,6 +97,11 @@ A `Pipeline` definition supports the following fields:
 
 ## Specifying `Resources`
 
+> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
+>
+> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
+> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
+
 A `Pipeline` requires [`PipelineResources`](resources.md) to provide inputs and store outputs
 for the `Tasks` that comprise it. You can declare those in the `resources` field in the `spec`
 section of the `Pipeline` definition. Each entry requires a unique `name` and a `type`. For example:
@@ -251,6 +256,11 @@ spec:
             resource: my-image
 ```
 
+> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
+>
+> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
+> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
+
 You can also provide [`Parameters`](tasks.md#specifying-parameters):
 
 ```yaml
@@ -353,6 +363,11 @@ execute before the `deploy-app` `Task` regardless of the order in which those
           - build-app
 ```
 
+> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
+>
+> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
+> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
+
 ### Using the `runAfter` parameter
 
 If you need your `Tasks` to execute in a specific order within the `Pipeline`
@@ -383,6 +398,11 @@ they are referenced in the `Pipeline` definition.
       - name: workspace
         resource: my-repo
 ```
+
+> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
+>
+> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
+> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
 
 ### Using the `retries` parameter
 
@@ -476,14 +496,24 @@ There are a lot of scenarios where `when` expressions can be really useful. Some
 
 #### Guarding a `Task` and its dependent `Tasks`
 
-When  `when` expressions evaluate to `False`, the `Task` and its dependent `Tasks` will be skipped by default while the
-rest of the `Pipeline` will execute. Dependencies between `Tasks` can be either ordering ([`runAfter`](https://github.com/tektoncd/pipeline/blob/main/docs/pipelines.md#using-the-runafter-parameter))
+> :warning: **Scoping `when` expressions to a `Task` and its dependent `Tasks` is deprecated.**
+>
+> Consider migrating to scoping `when` expressions to the guarded `Task` only instead.
+> Read more in the [documentation](#guarding-a-task-only) and [TEP-0059: Skipping Strategies][tep-0059].
+> 
+[tep-0059]: https://github.com/tektoncd/community/blob/main/teps/0059-skipping-strategies.md
+
+To guard a `Task` and its dependent `Tasks`, set the global default scope of `when` expressions to `Task` using the
+`scope-when-expressions-to-task` field in [`config/config-feature-flags.yaml`](install.md#customizing-the-pipelines-controller-behavior)
+by changing it to "false".
+
+When  `when` expressions evaluate to `False`, and `scope-when-expressions-to-task` is set to "false", the `Task` and 
+its dependent `Tasks` will be skipped while the rest of the `Pipeline` will execute. Dependencies between `Tasks` can
+be either ordering ([`runAfter`](https://github.com/tektoncd/pipeline/blob/main/docs/pipelines.md#using-the-runafter-parameter))
 or resource (e.g. [`Results`](https://github.com/tektoncd/pipeline/blob/main/docs/pipelines.md#using-results))
 dependencies, as further described in [configuring execution order](#configuring-the-task-execution-order). The global
-default scope of `when` expressions is set to a `Task` and its dependent`Tasks`; `scope-when-expressions-to-task` field
-in [`config/config-feature-flags.yaml`](install.md#customizing-the-pipelines-controller-behavior) defaults to "false".
-
-**Note:** Scoping `when` expressions to a `Task` and its dependent `Tasks` is deprecated
+default scope of `when` expressions is set to a `Task` only; `scope-when-expressions-to-task` field in 
+[`config/config-feature-flags.yaml`](install.md#customizing-the-pipelines-controller-behavior) defaults to "true".
 
 To guard a `Task` and its dependent Tasks:
 - cascade the `when` expressions to the specific dependent `Tasks` to be guarded as well
@@ -626,9 +656,7 @@ tasks:
 
 #### Guarding a `Task` only
 
-To guard a `Task` only and unblock execution of its dependent `Tasks`, set the global default scope of `when` expressions
-to `Task` using the `scope-when-expressions-to-task` field in [`config/config-feature-flags.yaml`](install.md#customizing-the-pipelines-controller-behavior)
-by changing it to "true"
+When `when` expressions evaluate to `False`, the `Task` will be skipped and:
 - The ordering-dependent `Tasks` will be executed
 - The resource-dependent `Tasks` (and their dependencies) will be skipped because of missing `Results` from the skipped 
   parent `Task`. When we add support for [default `Results`](https://github.com/tektoncd/community/pull/240), then the 
@@ -636,6 +664,8 @@ by changing it to "true"
   addition, if a resource-dependent `Task` needs a file from a guarded parent `Task` in a shared `Workspace`, make sure
   to handle the execution of the child `Task` in case the expected file is missing from the `Workspace` because the 
   guarded parent `Task` is skipped. 
+
+On the other hand, the rest of the `Pipeline` will continue executing.
 
 ```
                                      tests
@@ -686,7 +716,7 @@ tasks:
     name: slack-msg
 ```
 
-With `when` expressions scoped to `Task`, if `manual-approval` is skipped, execution of it's dependent `Tasks` 
+With `when` expressions scoped to `Task`, if `manual-approval` is skipped, execution of its dependent `Tasks` 
 (`slack-msg`, `build-image` and `deploy-image`) would be unblocked regardless:
 - `build-image` and `deploy-image` should be executed successfully
 - `slack-msg` will be skipped because it is missing the `approver` `Result` from `manual-approval`
@@ -871,6 +901,20 @@ when:
 
 For an end-to-end example, see [`Task` `Results` in a `PipelineRun`](../examples/v1beta1/pipelineruns/task_results_example.yaml).
 
+Note that `when` expressions are whitespace-sensitive.  In particular, when producing results intended for inputs to `when` 
+expressions that may include newlines at their close (e.g. `cat`, `jq`), you may wish to truncate them.
+
+```yaml
+taskSpec:
+  params:
+  - name: jsonQuery-check
+  steps:
+  - image: ubuntu
+    name: store-name-in-results
+    script: |
+      curl -s https://my-json-server.typicode.com/typicode/demo/profile | jq -r .name | tr -d '\n' | tee $(results.name.path)
+```
+
 ### Emitting `Results` from a `Pipeline`
 
 A `Pipeline` can emit `Results` of its own for a variety of reasons - an external
@@ -1009,6 +1053,11 @@ In particular:
 4. The entire `Pipeline` completes execution once both `lint-repo` and `deploy-all`
    complete execution.
 
+> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
+>
+> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
+> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
+
 ## Adding a description
 
 The `description` field is an optional field and can be used to provide description of the `Pipeline`.
@@ -1065,6 +1114,11 @@ spec:
         - name: shared-workspace
           workspace: shared-workspace
 ```
+
+> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
+>
+> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
+> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
 
 ### Specifying `Parameters` in `finally` tasks
 
@@ -1374,6 +1428,11 @@ spec:
             from: #invalid
               - tests
 ```
+
+> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
+>
+> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
+> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
 
 #### Cannot configure the `finally` task execution order
 

@@ -17,7 +17,9 @@ limitations under the License.
 package main
 
 import (
+	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -25,6 +27,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/containerd/containerd/platforms"
 	"github.com/tektoncd/pipeline/cmd/entrypoint/subcommands"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline"
 	"github.com/tektoncd/pipeline/pkg/credentials"
@@ -45,8 +48,7 @@ var (
 	breakpointOnFailure = flag.Bool("breakpoint_on_failure", false, "If specified, expect steps to not skip on failure")
 	onError             = flag.String("on_error", "", "Set to \"continue\" to ignore an error and continue when a container terminates with a non-zero exit code."+
 		" Set to \"stopAndFail\" to declare a failure with a step error and stop executing the rest of the steps.")
-	stepMetadataDir     = flag.String("step_metadata_dir", "", "If specified, create directory to store the step metadata e.g. /tekton/steps/<step-name>/")
-	stepMetadataDirLink = flag.String("step_metadata_dir_link", "", "creates a symbolic link to the specified step_metadata_dir e.g. /tekton/steps/<step-index>/")
+	stepMetadataDir = flag.String("step_metadata_dir", "", "If specified, create directory to store the step metadata e.g. /tekton/steps/<step-name>/")
 )
 
 const (
@@ -99,13 +101,33 @@ func main() {
 		}
 	}
 
+	var cmd []string
+	if *ep != "" {
+		cmd = []string{*ep}
+	} else {
+		env := os.Getenv("TEKTON_PLATFORM_COMMANDS")
+		var cmds map[string][]string
+		if err := json.Unmarshal([]byte(env), &cmds); err != nil {
+			log.Fatal(err)
+		}
+		// NB: This value contains OS/architecture and maybe variant.
+		// It doesn't include osversion, which is necessary to
+		// disambiguate two images both for e.g., Windows, that only
+		// differ by osversion.
+		plat := platforms.DefaultString()
+		var err error
+		cmd, err = selectCommandForPlatform(cmds, plat)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	e := entrypoint.Entrypointer{
-		Entrypoint:          *ep,
+		Command:             append(cmd, flag.Args()...),
 		WaitFiles:           strings.Split(*waitFiles, ","),
 		WaitFileContent:     *waitFileContent,
 		PostFile:            *postFile,
 		TerminationPath:     *terminationPath,
-		Args:                flag.Args(),
 		Waiter:              &realWaiter{waitPollingInterval: defaultWaitPollingInterval, breakpointOnFailure: *breakpointOnFailure},
 		Runner:              &realRunner{},
 		PostWriter:          &realPostWriter{},
@@ -114,7 +136,6 @@ func main() {
 		BreakpointOnFailure: *breakpointOnFailure,
 		OnError:             *onError,
 		StepMetadataDir:     *stepMetadataDir,
-		StepMetadataDirLink: *stepMetadataDirLink,
 	}
 
 	// Copy any creds injected by the controller into the $HOME directory of the current
@@ -155,4 +176,21 @@ func main() {
 			log.Fatalf("Error executing command: %v", err)
 		}
 	}
+}
+
+func selectCommandForPlatform(cmds map[string][]string, plat string) ([]string, error) {
+	cmd, found := cmds[plat]
+	if found {
+		return cmd, nil
+	}
+
+	// If the command wasn't found, check if there's a
+	// command defined for the same platform without a CPU
+	// variant specified.
+	platWithoutVariant := plat[:strings.LastIndex(plat, "/")]
+	cmd, found = cmds[platWithoutVariant]
+	if found {
+		return cmd, nil
+	}
+	return nil, fmt.Errorf("could not find command for platform %q", plat)
 }

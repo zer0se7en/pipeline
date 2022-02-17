@@ -34,7 +34,7 @@ const (
 	debugInfoVolumeName    = "tekton-internal-debug-info"
 	scriptsDir             = "/tekton/scripts"
 	debugScriptsDir        = "/tekton/debug/scripts"
-	defaultScriptPreamble  = "#!/bin/sh\nset -xe\n"
+	defaultScriptPreamble  = "#!/bin/sh\nset -e\n"
 	debugInfoDir           = "/tekton/debug/info"
 )
 
@@ -92,7 +92,7 @@ func convertScripts(shellImageLinux string, shellImageWin string, steps []v1beta
 		Image:        shellImage,
 		Command:      []string{shellCommand},
 		Args:         []string{shellArg, ""},
-		VolumeMounts: []corev1.VolumeMount{writeScriptsVolumeMount, toolsMount},
+		VolumeMounts: []corev1.VolumeMount{writeScriptsVolumeMount, binMount},
 	}
 
 	breakpoints := []string{}
@@ -174,7 +174,7 @@ touch ${scriptfile} && chmod +x ${scriptfile}
 cat > ${scriptfile} << '%s'
 %s
 %s
-/tekton/tools/entrypoint decode-script "${scriptfile}"
+/tekton/bin/entrypoint decode-script "${scriptfile}"
 `, scriptFile, heredoc, script, heredoc)
 
 			// Set the command to execute the correct script in the mounted
@@ -205,10 +205,10 @@ cat > ${scriptfile} << '%s'
 		}
 		debugScripts := []script{{
 			name:    "continue",
-			content: defaultScriptPreamble + fmt.Sprintf(debugContinueScriptTemplate, len(steps), debugInfoDir, mountPoint),
+			content: defaultScriptPreamble + fmt.Sprintf(debugContinueScriptTemplate, len(steps), debugInfoDir, runDir),
 		}, {
 			name:    "fail-continue",
-			content: defaultScriptPreamble + fmt.Sprintf(debugFailScriptTemplate, len(steps), debugInfoDir, mountPoint),
+			content: defaultScriptPreamble + fmt.Sprintf(debugFailScriptTemplate, len(steps), debugInfoDir, runDir),
 		}}
 
 		// Add debug or breakpoint related scripts to /tekton/debug/scripts

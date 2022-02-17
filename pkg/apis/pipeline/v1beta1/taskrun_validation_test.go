@@ -38,13 +38,13 @@ func TestTaskRun_Invalidate(t *testing.T) {
 	}{{
 		name:    "invalid taskspec",
 		taskRun: &v1beta1.TaskRun{},
-		want: apis.ErrMissingField("spec.taskref.name", "spec.taskspec").Also(
+		want: apis.ErrMissingOneOf("spec.taskRef", "spec.taskSpec").Also(
 			apis.ErrGeneric(`invalid resource name "": must be a valid DNS label`, "metadata.name")),
 	}}
 	for _, ts := range tests {
 		t.Run(ts.name, func(t *testing.T) {
 			err := ts.taskRun.Validate(context.Background())
-			if d := cmp.Diff(err.Error(), ts.want.Error()); d != "" {
+			if d := cmp.Diff(ts.want.Error(), err.Error()); d != "" {
 				t.Error(diff.PrintWantGot(d))
 			}
 		})
@@ -72,6 +72,34 @@ func TestTaskRun_Validate(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "taskrname"},
 		},
 		wc: apis.WithinDelete,
+	}, {
+		name: "alpha feature: valid resolver",
+		taskRun: &v1beta1.TaskRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "tr",
+			},
+			Spec: v1beta1.TaskRunSpec{
+				TaskRef: &v1beta1.TaskRef{ResolverRef: v1beta1.ResolverRef{Resolver: "git"}},
+			},
+		},
+		wc: enableAlphaAPIFields,
+	}, {
+		name: "alpha feature: valid resolver with resource parameters",
+		taskRun: &v1beta1.TaskRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "tr",
+			},
+			Spec: v1beta1.TaskRunSpec{
+				TaskRef: &v1beta1.TaskRef{ResolverRef: v1beta1.ResolverRef{Resolver: "git", Resource: []v1beta1.ResolverParam{{
+					Name:  "repo",
+					Value: "https://github.com/tektoncd/pipeline.git",
+				}, {
+					Name:  "branch",
+					Value: "baz",
+				}}}},
+			},
+		},
+		wc: enableAlphaAPIFields,
 	}}
 	for _, ts := range tests {
 		t.Run(ts.name, func(t *testing.T) {
@@ -143,13 +171,13 @@ func TestTaskRunSpec_Invalidate(t *testing.T) {
 	}{{
 		name:    "invalid taskspec",
 		spec:    v1beta1.TaskRunSpec{},
-		wantErr: apis.ErrMissingField("taskref.name", "taskspec"),
+		wantErr: apis.ErrMissingOneOf("taskRef", "taskSpec"),
 	}, {
-		name: "invalid taskref name",
+		name: "missing taskref name",
 		spec: v1beta1.TaskRunSpec{
 			TaskRef: &v1beta1.TaskRef{},
 		},
-		wantErr: apis.ErrMissingField("taskref.name, taskspec"),
+		wantErr: apis.ErrMissingField("taskRef.name"),
 	}, {
 		name: "invalid taskref and taskspec together",
 		spec: v1beta1.TaskRunSpec{
@@ -163,7 +191,7 @@ func TestTaskRunSpec_Invalidate(t *testing.T) {
 				}}},
 			},
 		},
-		wantErr: apis.ErrDisallowedFields("taskspec", "taskref"),
+		wantErr: apis.ErrMultipleOneOf("taskRef", "taskSpec"),
 	}, {
 		name: "negative pipeline timeout",
 		spec: v1beta1.TaskRunSpec{
@@ -194,7 +222,7 @@ func TestTaskRunSpec_Invalidate(t *testing.T) {
 		},
 		wantErr: &apis.FieldError{
 			Message: `invalid value "invalid-name-with-$weird-char/%"`,
-			Paths:   []string{"taskspec.steps[0].name"},
+			Paths:   []string{"taskSpec.steps[0].name"},
 			Details: "Task step name must be a valid DNS Label, For more info refer to https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names",
 		},
 	}, {
@@ -218,16 +246,15 @@ func TestTaskRunSpec_Invalidate(t *testing.T) {
 				Bundle: "docker.io/foo",
 			},
 		},
-		wantErr: apis.ErrDisallowedFields("taskref.bundle"),
+		wantErr: apis.ErrDisallowedFields("taskRef.bundle"),
 	}, {
 		name: "bundle missing name",
 		spec: v1beta1.TaskRunSpec{
 			TaskRef: &v1beta1.TaskRef{
 				Bundle: "docker.io/foo",
 			},
-			TaskSpec: &v1beta1.TaskSpec{Steps: []v1beta1.Step{{Container: corev1.Container{Image: "foo"}}}},
 		},
-		wantErr: apis.ErrMissingField("taskref.name"),
+		wantErr: apis.ErrMissingField("taskRef.name"),
 		wc:      enableTektonOCIBundles(t),
 	}, {
 		name: "invalid bundle reference",
@@ -237,7 +264,7 @@ func TestTaskRunSpec_Invalidate(t *testing.T) {
 				Bundle: "invalid reference",
 			},
 		},
-		wantErr: apis.ErrInvalidValue("invalid bundle reference (could not parse reference: invalid reference)", "taskref.bundle"),
+		wantErr: apis.ErrInvalidValue("invalid bundle reference", "taskRef.bundle", "could not parse reference: invalid reference"),
 		wc:      enableTektonOCIBundles(t),
 	}, {
 		name: "using debug when apifields stable",
@@ -246,10 +273,10 @@ func TestTaskRunSpec_Invalidate(t *testing.T) {
 				Name: "my-task",
 			},
 			Debug: &v1beta1.TaskRunDebug{
-				Breakpoint: []string{"bReaKdAnCe"},
+				Breakpoint: []string{"onFailure"},
 			},
 		},
-		wantErr: apis.ErrDisallowedFields("debug"),
+		wantErr: apis.ErrGeneric("debug requires \"enable-api-fields\" feature gate to be \"alpha\" but it is \"stable\""),
 	}, {
 		name: "invalid breakpoint",
 		spec: v1beta1.TaskRunSpec{
@@ -261,6 +288,63 @@ func TestTaskRunSpec_Invalidate(t *testing.T) {
 			},
 		},
 		wantErr: apis.ErrInvalidValue("breakito is not a valid breakpoint. Available valid breakpoints include [onFailure]", "debug.breakpoint"),
+		wc:      enableAlphaAPIFields,
+	}, {
+		name: "taskref resolver disallowed without alpha feature gate",
+		spec: v1beta1.TaskRunSpec{
+			TaskRef: &v1beta1.TaskRef{
+				Name: "foo",
+				ResolverRef: v1beta1.ResolverRef{
+					Resolver: "git",
+				},
+			},
+		},
+		wantErr: apis.ErrDisallowedFields("resolver").ViaField("taskRef"),
+	}, {
+		name: "taskref resource disallowed without alpha feature gate",
+		spec: v1beta1.TaskRunSpec{
+			TaskRef: &v1beta1.TaskRef{
+				Name: "foo",
+				ResolverRef: v1beta1.ResolverRef{
+					Resource: []v1beta1.ResolverParam{},
+				},
+			},
+		},
+		wantErr: apis.ErrDisallowedFields("resource").ViaField("taskRef"),
+	}, {
+		name: "taskref resource disallowed without resolver",
+		spec: v1beta1.TaskRunSpec{
+			TaskRef: &v1beta1.TaskRef{
+				ResolverRef: v1beta1.ResolverRef{
+					Resource: []v1beta1.ResolverParam{},
+				},
+			},
+		},
+		wantErr: apis.ErrMissingField("resolver").ViaField("taskRef"),
+		wc:      enableAlphaAPIFields,
+	}, {
+		name: "taskref resolver disallowed in conjunction with taskref name",
+		spec: v1beta1.TaskRunSpec{
+			TaskRef: &v1beta1.TaskRef{
+				Name: "foo",
+				ResolverRef: v1beta1.ResolverRef{
+					Resolver: "git",
+				},
+			},
+		},
+		wantErr: apis.ErrMultipleOneOf("name", "resolver").ViaField("taskRef"),
+		wc:      enableAlphaAPIFields,
+	}, {
+		name: "taskref resolver disallowed in conjunction with taskref bundle",
+		spec: v1beta1.TaskRunSpec{
+			TaskRef: &v1beta1.TaskRef{
+				Bundle: "bar",
+				ResolverRef: v1beta1.ResolverRef{
+					Resolver: "git",
+				},
+			},
+		},
+		wantErr: apis.ErrMultipleOneOf("bundle", "resolver").ViaField("taskRef"),
 		wc:      enableAlphaAPIFields,
 	}}
 	for _, ts := range tests {

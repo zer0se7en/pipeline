@@ -44,6 +44,7 @@ func ApplyParameters(spec *v1beta1.TaskSpec, tr *v1beta1.TaskRun, defaults ...v1
 	patterns := []string{
 		"params.%s",
 		"params[%q]",
+		"params['%s']",
 		// FIXME(vdemeester) Remove that with deprecating v1beta1
 		"inputs.params.%s",
 	}
@@ -110,10 +111,10 @@ func ApplyResources(spec *v1beta1.TaskSpec, resolvedResources map[string]v1beta1
 
 // ApplyContexts applies the substitution from $(context.(taskRun|task).*) with the specified values.
 // Uses "" as a default if a value is not available.
-func ApplyContexts(spec *v1beta1.TaskSpec, rtr *ResolvedTaskResources, tr *v1beta1.TaskRun) *v1beta1.TaskSpec {
+func ApplyContexts(spec *v1beta1.TaskSpec, taskName string, tr *v1beta1.TaskRun) *v1beta1.TaskSpec {
 	replacements := map[string]string{
 		"context.taskRun.name":      tr.Name,
-		"context.task.name":         rtr.TaskName,
+		"context.task.name":         taskName,
 		"context.taskRun.namespace": tr.Namespace,
 		"context.taskRun.uid":       string(tr.ObjectMeta.UID),
 		"context.task.retry-count":  strconv.Itoa(len(tr.Status.RetriesStatus)),
@@ -203,6 +204,7 @@ func ApplyTaskResults(spec *v1beta1.TaskSpec) *v1beta1.TaskSpec {
 	patterns := []string{
 		"results.%s.path",
 		"results[%q].path",
+		"results['%s'].path",
 	}
 
 	for _, result := range spec.Results {

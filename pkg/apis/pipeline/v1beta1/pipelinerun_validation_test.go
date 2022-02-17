@@ -18,7 +18,6 @@ package v1beta1_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -48,7 +47,7 @@ func TestPipelineRun_Invalid(t *testing.T) {
 				ServiceAccountName: "foo",
 			},
 		},
-		want: apis.ErrMissingField("spec.pipelineref.name, spec.pipelinespec"),
+		want: apis.ErrMissingOneOf("spec.pipelineRef", "spec.pipelineSpec"),
 	}, {
 		name: "invalid pipelinerun metadata",
 		pr: v1beta1.PipelineRun{
@@ -135,7 +134,7 @@ func TestPipelineRun_Invalid(t *testing.T) {
 				},
 			},
 		},
-		want: apis.ErrDisallowedFields("spec.pipelineref.bundle"),
+		want: apis.ErrDisallowedFields("spec.pipelineRef.bundle"),
 	}, {
 		name: "bundle missing name",
 		pr: v1beta1.PipelineRun{
@@ -146,10 +145,9 @@ func TestPipelineRun_Invalid(t *testing.T) {
 				PipelineRef: &v1beta1.PipelineRef{
 					Bundle: "docker.io/foo",
 				},
-				PipelineSpec: &v1beta1.PipelineSpec{Description: "foo"},
 			},
 		},
-		want: apis.ErrMissingField("spec.pipelineref.name"),
+		want: apis.ErrMissingField("spec.pipelineRef.name"),
 		wc:   enableTektonOCIBundles(t),
 	}, {
 		name: "invalid bundle reference",
@@ -164,7 +162,7 @@ func TestPipelineRun_Invalid(t *testing.T) {
 				},
 			},
 		},
-		want: apis.ErrInvalidValue("invalid bundle reference (could not parse reference: not a valid reference)", "spec.pipelineref.bundle"),
+		want: apis.ErrInvalidValue("invalid bundle reference", "spec.pipelineRef.bundle", "could not parse reference: not a valid reference"),
 		wc:   enableTektonOCIBundles(t),
 	}, {
 		name: "pipelinerun pending while running",
@@ -197,7 +195,7 @@ func TestPipelineRun_Invalid(t *testing.T) {
 				ctx = tc.wc(ctx)
 			}
 			err := tc.pr.Validate(ctx)
-			if d := cmp.Diff(err.Error(), tc.want.Error()); d != "" {
+			if d := cmp.Diff(tc.want.Error(), err.Error()); d != "" {
 				t.Error(diff.PrintWantGot(d))
 			}
 		})
@@ -354,6 +352,34 @@ func TestPipelineRun_Validate(t *testing.T) {
 			},
 		},
 		wc: enableAlphaAPIFields,
+	}, {
+		name: "alpha feature: valid resolver",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pr",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				PipelineRef: &v1beta1.PipelineRef{ResolverRef: v1beta1.ResolverRef{Resolver: "git"}},
+			},
+		},
+		wc: enableAlphaAPIFields,
+	}, {
+		name: "alpha feature: valid resolver with resource parameters",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pr",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				PipelineRef: &v1beta1.PipelineRef{ResolverRef: v1beta1.ResolverRef{Resolver: "git", Resource: []v1beta1.ResolverParam{{
+					Name:  "repo",
+					Value: "https://github.com/tektoncd/pipeline.git",
+				}, {
+					Name:  "branch",
+					Value: "baz",
+				}}}},
+			},
+		},
+		wc: enableAlphaAPIFields,
 	}}
 
 	for _, ts := range tests {
@@ -371,15 +397,16 @@ func TestPipelineRun_Validate(t *testing.T) {
 
 func TestPipelineRunSpec_Invalidate(t *testing.T) {
 	tests := []struct {
-		name    string
-		spec    v1beta1.PipelineRunSpec
-		wantErr *apis.FieldError
+		name        string
+		spec        v1beta1.PipelineRunSpec
+		wantErr     *apis.FieldError
+		withContext func(context.Context) context.Context
 	}{{
 		name: "pipelineRef without Pipeline Name",
 		spec: v1beta1.PipelineRunSpec{
 			PipelineRef: &v1beta1.PipelineRef{},
 		},
-		wantErr: apis.ErrMissingField("pipelineref.name", "pipelinespec"),
+		wantErr: apis.ErrMissingField("pipelineRef.name"),
 	}, {
 		name: "pipelineRef and pipelineSpec together",
 		spec: v1beta1.PipelineRunSpec{
@@ -394,7 +421,7 @@ func TestPipelineRunSpec_Invalidate(t *testing.T) {
 					},
 				}}},
 		},
-		wantErr: apis.ErrDisallowedFields("pipelinespec", "pipelineref"),
+		wantErr: apis.ErrMultipleOneOf("pipelineRef", "pipelineSpec"),
 	}, {
 		name: "workspaces may only appear once",
 		spec: v1beta1.PipelineRunSpec{
@@ -433,10 +460,71 @@ func TestPipelineRunSpec_Invalidate(t *testing.T) {
 				"workspaces[0].volumeclaimtemplate",
 			},
 		},
+	}, {
+		name: "pipelineref resolver disallowed without alpha feature gate",
+		spec: v1beta1.PipelineRunSpec{
+			PipelineRef: &v1beta1.PipelineRef{
+				Name: "foo",
+				ResolverRef: v1beta1.ResolverRef{
+					Resolver: "foo",
+				},
+			},
+		},
+		wantErr: apis.ErrDisallowedFields("resolver").ViaField("pipelineRef"),
+	}, {
+		name: "pipelineref resource disallowed without alpha feature gate",
+		spec: v1beta1.PipelineRunSpec{
+			PipelineRef: &v1beta1.PipelineRef{
+				Name: "foo",
+				ResolverRef: v1beta1.ResolverRef{
+					Resource: []v1beta1.ResolverParam{},
+				},
+			},
+		},
+		wantErr: apis.ErrDisallowedFields("resource").ViaField("pipelineRef"),
+	}, {
+		name: "pipelineref resource disallowed without resolver",
+		spec: v1beta1.PipelineRunSpec{
+			PipelineRef: &v1beta1.PipelineRef{
+				ResolverRef: v1beta1.ResolverRef{
+					Resource: []v1beta1.ResolverParam{},
+				},
+			},
+		},
+		wantErr:     apis.ErrMissingField("resolver").ViaField("pipelineRef"),
+		withContext: enableAlphaAPIFields,
+	}, {
+		name: "pipelineref resolver disallowed in conjunction with pipelineref name",
+		spec: v1beta1.PipelineRunSpec{
+			PipelineRef: &v1beta1.PipelineRef{
+				Name: "foo",
+				ResolverRef: v1beta1.ResolverRef{
+					Resolver: "bar",
+				},
+			},
+		},
+		wantErr:     apis.ErrMultipleOneOf("name", "resolver").ViaField("pipelineRef"),
+		withContext: enableAlphaAPIFields,
+	}, {
+		name: "pipelineref resolver disallowed in conjunction with pipelineref bundle",
+		spec: v1beta1.PipelineRunSpec{
+			PipelineRef: &v1beta1.PipelineRef{
+				Bundle: "foo",
+				ResolverRef: v1beta1.ResolverRef{
+					Resolver: "baz",
+				},
+			},
+		},
+		wantErr:     apis.ErrMultipleOneOf("bundle", "resolver").ViaField("pipelineRef"),
+		withContext: enableAlphaAPIFields,
 	}}
 	for _, ps := range tests {
 		t.Run(ps.name, func(t *testing.T) {
-			err := ps.spec.Validate(context.Background())
+			ctx := context.Background()
+			if ps.withContext != nil {
+				ctx = ps.withContext(ctx)
+			}
+			err := ps.spec.Validate(ctx)
 			if d := cmp.Diff(ps.wantErr.Error(), err.Error()); d != "" {
 				t.Error(diff.PrintWantGot(d))
 			}
@@ -599,7 +687,77 @@ func TestPipelineRunWithAlphaFields_Invalid(t *testing.T) {
 				},
 			},
 		},
-		want: apis.ErrGeneric(fmt.Sprintf(`timeouts requires "enable-api-fields" feature gate to be "alpha" but it is "stable"`)),
+		want: apis.ErrGeneric(`timeouts requires "enable-api-fields" feature gate to be "alpha" but it is "stable"`),
+	}, {
+		name: "Tasks timeout = 0 but Pipeline timeout not set",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				PipelineRef: &v1beta1.PipelineRef{
+					Name: "prname",
+				},
+				Timeouts: &v1beta1.TimeoutFields{
+					Tasks: &metav1.Duration{Duration: 0 * time.Minute},
+				},
+			},
+		},
+		wc:   enableAlphaAPIFields,
+		want: apis.ErrInvalidValue(`0s (no timeout) should be <= default timeout duration`, "spec.timeouts.tasks"),
+	}, {
+		name: "Tasks timeout = 0 but Pipeline timeout is not 0",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				PipelineRef: &v1beta1.PipelineRef{
+					Name: "prname",
+				},
+				Timeouts: &v1beta1.TimeoutFields{
+					Pipeline: &metav1.Duration{Duration: 10 * time.Minute},
+					Tasks:    &metav1.Duration{Duration: 0 * time.Minute},
+				},
+			},
+		},
+		wc:   enableAlphaAPIFields,
+		want: apis.ErrInvalidValue(`0s (no timeout) should be <= pipeline duration`, "spec.timeouts.tasks"),
+	}, {
+		name: "Finally timeout = 0 but Pipeline timeout not set",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				PipelineRef: &v1beta1.PipelineRef{
+					Name: "prname",
+				},
+				Timeouts: &v1beta1.TimeoutFields{
+					Finally: &metav1.Duration{Duration: 0 * time.Minute},
+				},
+			},
+		},
+		wc:   enableAlphaAPIFields,
+		want: apis.ErrInvalidValue(`0s (no timeout) should be <= default timeout duration`, "spec.timeouts.finally"),
+	}, {
+		name: "Finally timeout = 0 but Pipeline timeout is not 0",
+		pr: v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "pipelinelinename",
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				PipelineRef: &v1beta1.PipelineRef{
+					Name: "prname",
+				},
+				Timeouts: &v1beta1.TimeoutFields{
+					Pipeline: &metav1.Duration{Duration: 10 * time.Minute},
+					Finally:  &metav1.Duration{Duration: 0 * time.Minute},
+				},
+			},
+		},
+		wc:   enableAlphaAPIFields,
+		want: apis.ErrInvalidValue(`0s (no timeout) should be <= pipeline duration`, "spec.timeouts.finally"),
 	}}
 
 	for _, tc := range tests {

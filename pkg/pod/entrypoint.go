@@ -23,9 +23,9 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strconv"
 	"strings"
 
-	"github.com/tektoncd/pipeline/pkg/apis/pipeline"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	"gomodules.xyz/jsonpatch/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -36,9 +36,12 @@ import (
 )
 
 const (
-	toolsVolumeName  = "tekton-internal-tools"
-	mountPoint       = "/tekton/tools"
-	entrypointBinary = mountPoint + "/entrypoint"
+	binVolumeName    = "tekton-internal-bin"
+	binDir           = "/tekton/bin"
+	entrypointBinary = binDir + "/entrypoint"
+
+	runVolumeName = "tekton-internal-run"
+	runDir        = "/tekton/run"
 
 	downwardVolumeName     = "tekton-internal-downward"
 	downwardMountPoint     = "/tekton/downward"
@@ -50,17 +53,22 @@ const (
 	stepPrefix    = "step-"
 	sidecarPrefix = "sidecar-"
 
-	BreakpointOnFailure = "onFailure"
+	breakpointOnFailure = "onFailure"
 )
 
 var (
 	// TODO(#1605): Generate volumeMount names, to avoid collisions.
-	toolsMount = corev1.VolumeMount{
-		Name:      toolsVolumeName,
-		MountPath: mountPoint,
+	binMount = corev1.VolumeMount{
+		Name:      binVolumeName,
+		MountPath: binDir,
 	}
-	toolsVolume = corev1.Volume{
-		Name:         toolsVolumeName,
+	binROMount = corev1.VolumeMount{
+		Name:      binVolumeName,
+		MountPath: binDir,
+		ReadOnly:  true,
+	}
+	binVolume = corev1.Volume{
+		Name:         binVolumeName,
 		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
 	}
 
@@ -82,39 +90,27 @@ var (
 	downwardMount = corev1.VolumeMount{
 		Name:      downwardVolumeName,
 		MountPath: downwardMountPoint,
+		// Marking this volume mount readonly is technically redundant,
+		// since the volume itself is readonly, but including for completeness.
+		ReadOnly: true,
 	}
 )
 
 // orderContainers returns the specified steps, modified so that they are
-// executed in order by overriding the entrypoint binary. It also returns the
-// init container that places the entrypoint binary pulled from the
-// entrypointImage.
+// executed in order by overriding the entrypoint binary.
 //
 // Containers must have Command specified; if the user didn't specify a
 // command, we must have fetched the image's ENTRYPOINT before calling this
 // method, using entrypoint_lookup.go.
 // Additionally, Step timeouts are added as entrypoint flag.
-func orderContainers(entrypointImage string, commonExtraEntrypointArgs []string, steps []corev1.Container, taskSpec *v1beta1.TaskSpec, breakpointConfig *v1beta1.TaskRunDebug) (corev1.Container, []corev1.Container, error) {
-	initContainer := corev1.Container{
-		Name:  "place-tools",
-		Image: entrypointImage,
-		// Rewrite default WorkingDir from "/home/nonroot" to "/"
-		// as suggested at https://github.com/GoogleContainerTools/distroless/issues/718
-		// to avoid permission errors with nonroot users not equal to `65532`
-		WorkingDir: "/",
-		// Invoke the entrypoint binary in "cp mode" to copy itself
-		// into the correct location for later steps.
-		Command:      []string{"/ko-app/entrypoint", "cp", "/ko-app/entrypoint", entrypointBinary},
-		VolumeMounts: []corev1.VolumeMount{toolsMount},
-	}
-
+func orderContainers(commonExtraEntrypointArgs []string, steps []corev1.Container, taskSpec *v1beta1.TaskSpec, breakpointConfig *v1beta1.TaskRunDebug) ([]corev1.Container, error) {
 	if len(steps) == 0 {
-		return corev1.Container{}, nil, errors.New("No steps specified")
+		return nil, errors.New("No steps specified")
 	}
 
 	for i, s := range steps {
 		var argsForEntrypoint []string
-		name := StepName(steps[i].Name, i)
+		idx := strconv.Itoa(i)
 		switch i {
 		case 0:
 			argsForEntrypoint = []string{
@@ -122,19 +118,17 @@ func orderContainers(entrypointImage string, commonExtraEntrypointArgs []string,
 				"-wait_file", filepath.Join(downwardMountPoint, downwardMountReadyFile),
 				"-wait_file_content", // Wait for file contents, not just an empty file.
 				// Start next step.
-				"-post_file", filepath.Join(mountPoint, fmt.Sprintf("%d", i)),
+				"-post_file", filepath.Join(runDir, idx, "out"),
 				"-termination_path", terminationPath,
-				"-step_metadata_dir", filepath.Join(pipeline.StepsDir, name),
-				"-step_metadata_dir_link", filepath.Join(pipeline.StepsDir, fmt.Sprintf("%d", i)),
+				"-step_metadata_dir", filepath.Join(runDir, idx, "status"),
 			}
 		default:
 			// All other steps wait for previous file, write next file.
 			argsForEntrypoint = []string{
-				"-wait_file", filepath.Join(mountPoint, fmt.Sprintf("%d", i-1)),
-				"-post_file", filepath.Join(mountPoint, fmt.Sprintf("%d", i)),
+				"-wait_file", filepath.Join(runDir, strconv.Itoa(i-1), "out"),
+				"-post_file", filepath.Join(runDir, idx, "out"),
 				"-termination_path", terminationPath,
-				"-step_metadata_dir", filepath.Join(pipeline.StepsDir, name),
-				"-step_metadata_dir_link", filepath.Join(pipeline.StepsDir, fmt.Sprintf("%d", i)),
+				"-step_metadata_dir", filepath.Join(runDir, idx, "status"),
 			}
 		}
 		argsForEntrypoint = append(argsForEntrypoint, commonExtraEntrypointArgs...)
@@ -150,37 +144,34 @@ func orderContainers(entrypointImage string, commonExtraEntrypointArgs []string,
 			argsForEntrypoint = append(argsForEntrypoint, resultArgument(steps, taskSpec.Results)...)
 		}
 
-		cmd, args := s.Command, s.Args
-		if len(cmd) == 0 {
-			return corev1.Container{}, nil, fmt.Errorf("Step %d did not specify command", i)
-		}
-		if len(cmd) > 1 {
-			args = append(cmd[1:], args...)
-			cmd = []string{cmd[0]}
-		}
-
 		if breakpointConfig != nil && len(breakpointConfig.Breakpoint) > 0 {
 			breakpoints := breakpointConfig.Breakpoint
 			for _, b := range breakpoints {
 				// TODO(TEP #0042): Add other breakpoints
-				if b == BreakpointOnFailure {
+				if b == breakpointOnFailure {
 					argsForEntrypoint = append(argsForEntrypoint, "-breakpoint_on_failure")
 				}
 			}
 		}
 
-		argsForEntrypoint = append(argsForEntrypoint, "-entrypoint", cmd[0], "--")
+		cmd, args := s.Command, s.Args
+		if len(cmd) > 0 {
+			argsForEntrypoint = append(argsForEntrypoint, "-entrypoint", cmd[0])
+		}
+		if len(cmd) > 1 {
+			args = append(cmd[1:], args...)
+		}
+		argsForEntrypoint = append(argsForEntrypoint, "--")
 		argsForEntrypoint = append(argsForEntrypoint, args...)
 
 		steps[i].Command = []string{entrypointBinary}
 		steps[i].Args = argsForEntrypoint
-		steps[i].VolumeMounts = append(steps[i].VolumeMounts, toolsMount)
 		steps[i].TerminationMessagePath = terminationPath
 	}
 	// Mount the Downward volume into the first step container.
 	steps[0].VolumeMounts = append(steps[0].VolumeMounts, downwardMount)
 
-	return initContainer, steps, nil
+	return steps, nil
 }
 
 func resultArgument(steps []corev1.Container, results []v1beta1.TaskResult) []string {
@@ -271,7 +262,7 @@ func IsSidecarStatusRunning(tr *v1beta1.TaskRun) bool {
 	return false
 }
 
-// isContainerStep returns true if the container name indicates that it
+// IsContainerStep returns true if the container name indicates that it
 // represents a step.
 func IsContainerStep(name string) bool { return strings.HasPrefix(name, stepPrefix) }
 

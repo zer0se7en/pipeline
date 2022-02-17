@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/tektoncd/pipeline/pkg/apis/config"
 	"github.com/tektoncd/pipeline/pkg/apis/validate"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -41,49 +40,28 @@ func (tr *TaskRun) Validate(ctx context.Context) *apis.FieldError {
 
 // Validate taskrun spec
 func (ts *TaskRunSpec) Validate(ctx context.Context) (errs *apis.FieldError) {
-	cfg := config.FromContextOrDefaults(ctx)
-	// can't have both taskRef and taskSpec at the same time
-	if (ts.TaskRef != nil && ts.TaskRef.Name != "") && ts.TaskSpec != nil {
-		errs = errs.Also(apis.ErrDisallowedFields("taskref", "taskspec"))
+	// Must have exactly one of taskRef and taskSpec.
+	if ts.TaskRef == nil && ts.TaskSpec == nil {
+		errs = errs.Also(apis.ErrMissingOneOf("taskRef", "taskSpec"))
 	}
-
-	// Check that one of TaskRef and TaskSpec is present
-	if (ts.TaskRef == nil || (ts.TaskRef != nil && ts.TaskRef.Name == "")) && ts.TaskSpec == nil {
-		errs = errs.Also(apis.ErrMissingField("taskref.name", "taskspec"))
+	if ts.TaskRef != nil && ts.TaskSpec != nil {
+		errs = errs.Also(apis.ErrMultipleOneOf("taskRef", "taskSpec"))
 	}
-
-	// If EnableTektonOCIBundles feature flag is on validate it.
-	// Otherwise, fail if it is present (as it won't be allowed nor used)
-	if cfg.FeatureFlags.EnableTektonOCIBundles {
-		// Check that if a bundle is specified, that a TaskRef is specified as well.
-		if (ts.TaskRef != nil && ts.TaskRef.Bundle != "") && ts.TaskRef.Name == "" {
-			errs = errs.Also(apis.ErrMissingField("taskref.name"))
-		}
-
-		// If a bundle url is specified, ensure it is parseable.
-		if ts.TaskRef != nil && ts.TaskRef.Bundle != "" {
-			if _, err := name.ParseReference(ts.TaskRef.Bundle); err != nil {
-				errs = errs.Also(apis.ErrInvalidValue(fmt.Sprintf("invalid bundle reference (%s)", err.Error()), "taskref.bundle"))
-			}
-		}
-	} else if ts.TaskRef != nil && ts.TaskRef.Bundle != "" {
-		errs = errs.Also(apis.ErrDisallowedFields("taskref.bundle"))
+	// Validate TaskRef if it's present.
+	if ts.TaskRef != nil {
+		errs = errs.Also(ts.TaskRef.Validate(ctx).ViaField("taskRef"))
 	}
-
-	// Validate TaskSpec if it's present
+	// Validate TaskSpec if it's present.
 	if ts.TaskSpec != nil {
-		errs = errs.Also(ts.TaskSpec.Validate(ctx).ViaField("taskspec"))
+		errs = errs.Also(ts.TaskSpec.Validate(ctx).ViaField("taskSpec"))
 	}
 
 	errs = errs.Also(validateParameters(ts.Params).ViaField("params"))
 	errs = errs.Also(validateWorkspaceBindings(ctx, ts.Workspaces).ViaField("workspaces"))
 	errs = errs.Also(ts.Resources.Validate(ctx).ViaField("resources"))
-	if cfg.FeatureFlags.EnableAPIFields == config.AlphaAPIFields {
-		if ts.Debug != nil {
-			errs = errs.Also(validateDebug(ts.Debug).ViaField("debug"))
-		}
-	} else if ts.Debug != nil {
-		errs = errs.Also(apis.ErrDisallowedFields("debug"))
+	if ts.Debug != nil {
+		errs = errs.Also(ValidateEnabledAPIFields(ctx, "debug", config.AlphaAPIFields).ViaField("debug"))
+		errs = errs.Also(validateDebug(ts.Debug).ViaField("debug"))
 	}
 
 	if ts.Status != "" {

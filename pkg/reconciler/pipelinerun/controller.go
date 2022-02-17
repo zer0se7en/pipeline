@@ -25,13 +25,11 @@ import (
 	pipelineclient "github.com/tektoncd/pipeline/pkg/client/injection/client"
 	conditioninformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1alpha1/condition"
 	runinformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1alpha1/run"
-	clustertaskinformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1beta1/clustertask"
-	pipelineinformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1beta1/pipeline"
 	pipelineruninformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1beta1/pipelinerun"
-	taskinformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1beta1/task"
 	taskruninformer "github.com/tektoncd/pipeline/pkg/client/injection/informers/pipeline/v1beta1/taskrun"
 	pipelinerunreconciler "github.com/tektoncd/pipeline/pkg/client/injection/reconciler/pipeline/v1beta1/pipelinerun"
 	resourceinformer "github.com/tektoncd/pipeline/pkg/client/resource/injection/informers/resource/v1alpha1/pipelineresource"
+	"github.com/tektoncd/pipeline/pkg/clock"
 	"github.com/tektoncd/pipeline/pkg/pipelinerunmetrics"
 	cloudeventclient "github.com/tektoncd/pipeline/pkg/reconciler/events/cloudevent"
 	"github.com/tektoncd/pipeline/pkg/reconciler/volumeclaim"
@@ -42,28 +40,15 @@ import (
 	"knative.dev/pkg/logging"
 )
 
-// ControllerConfiguration holds fields used to configure the
-// PipelineRun controller.
-type ControllerConfiguration struct {
-	// Images are the image references used across Tekton Pipelines.
-	Images pipeline.Images
-	// DisablePipelineRefResolution tells the controller not to perform
-	// resolution of pipeline refs from the cluster or bundles.
-	DisablePipelineRefResolution bool
-}
-
 // NewController instantiates a new controller.Impl from knative.dev/pkg/controller
-func NewController(namespace string, conf ControllerConfiguration) func(context.Context, configmap.Watcher) *controller.Impl {
+func NewController(opts *pipeline.Options, clock clock.Clock) func(context.Context, configmap.Watcher) *controller.Impl {
 	return func(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
 		logger := logging.FromContext(ctx)
 		kubeclientset := kubeclient.Get(ctx)
 		pipelineclientset := pipelineclient.Get(ctx)
 		taskRunInformer := taskruninformer.Get(ctx)
 		runInformer := runinformer.Get(ctx)
-		taskInformer := taskinformer.Get(ctx)
-		clusterTaskInformer := clustertaskinformer.Get(ctx)
 		pipelineRunInformer := pipelineruninformer.Get(ctx)
-		pipelineInformer := pipelineinformer.Get(ctx)
 		resourceInformer := resourceinformer.Get(ctx)
 		conditionInformer := conditioninformer.Get(ctx)
 		configStore := config.NewStore(logger.Named("config-store"), pipelinerunmetrics.MetricsOnStore(logger))
@@ -72,11 +57,9 @@ func NewController(namespace string, conf ControllerConfiguration) func(context.
 		c := &Reconciler{
 			KubeClientSet:     kubeclientset,
 			PipelineClientSet: pipelineclientset,
-			Images:            conf.Images,
+			Images:            opts.Images,
+			Clock:             clock,
 			pipelineRunLister: pipelineRunInformer.Lister(),
-			pipelineLister:    pipelineInformer.Lister(),
-			taskLister:        taskInformer.Lister(),
-			clusterTaskLister: clusterTaskInformer.Lister(),
 			taskRunLister:     taskRunInformer.Lister(),
 			runLister:         runInformer.Lister(),
 			resourceLister:    resourceInformer.Lister(),
@@ -84,7 +67,6 @@ func NewController(namespace string, conf ControllerConfiguration) func(context.
 			cloudEventClient:  cloudeventclient.Get(ctx),
 			metrics:           pipelinerunmetrics.Get(ctx),
 			pvcHandler:        volumeclaim.NewPVCHandler(kubeclientset, logger),
-			disableResolution: conf.DisablePipelineRefResolution,
 		}
 		impl := pipelinerunreconciler.NewImpl(ctx, c, func(impl *controller.Impl) controller.Options {
 			return controller.Options{

@@ -6,24 +6,29 @@ weight: 500
 -->
 # PipelineRuns
 
+<!-- toc -->
 - [PipelineRuns](#pipelineruns)
   - [Overview](#overview)
-  - [Configuring a `PipelineRun`](#configuring-a-pipelinerun)
-    - [Specifying the target `Pipeline`](#specifying-the-target-pipeline)
+  - [Configuring a <code>PipelineRun</code>](#configuring-a-pipelinerun)
+    - [Specifying the target <code>Pipeline</code>](#specifying-the-target-pipeline)
       - [Tekton Bundles](#tekton-bundles)
-  - [Specifying `Resources`](#specifying-resources)
-    - [Specifying `Parameters`](#specifying-parameters)
-    - [Specifying custom `ServiceAccount` credentials](#specifying-custom-serviceaccount-credentials)
-    - [Mapping `ServiceAccount` credentials to `Tasks`](#mapping-serviceaccount-credentials-to-tasks)
-    - [Specifying a `Pod` template](#specifying-a-pod-template)
+      - [Remote Pipelines](#remote-pipelines)
+    - [Specifying <code>Resources</code>](#specifying-resources)
+    - [Specifying <code>Parameters</code>](#specifying-parameters)
+      - [Implicit Parameters](#implicit-parameters)
+    - [Specifying custom <code>ServiceAccount</code> credentials](#specifying-custom-serviceaccount-credentials)
+    - [Mapping <code>ServiceAccount</code> credentials to <code>Tasks</code>](#mapping-serviceaccount-credentials-to-tasks)
+    - [Specifying a <code>Pod</code> template](#specifying-a-pod-template)
     - [Specifying taskRunSpecs](#specifying-taskrunspecs)
-    - [Specifying `Workspaces`](#specifying-workspaces)
-    - [Specifying `LimitRange` values](#specifying-limitrange-values)
+    - [Specifying <code>Workspaces</code>](#specifying-workspaces)
+    - [Specifying <code>LimitRange</code> values](#specifying-limitrange-values)
     - [Configuring a failure timeout](#configuring-a-failure-timeout)
   - [Monitoring execution status](#monitoring-execution-status)
-  - [Cancelling a `PipelineRun`](#cancelling-a-pipelinerun)
-  - [Pending `PipelineRuns`](#pending-pipelineruns)
-
+  - [Cancelling a <code>PipelineRun</code>](#cancelling-a-pipelinerun)
+  - [Gracefully cancelling a <code>PipelineRun</code>](#gracefully-cancelling-a-pipelinerun)
+  - [Gracefully stopping a <code>PipelineRun</code>](#gracefully-stopping-a-pipelinerun)
+  - [Pending <code>PipelineRuns</code>](#pending-pipelineruns)
+<!-- /toc -->
 
 
 ## Overview
@@ -160,8 +165,36 @@ in [Pipelines](pipelines.md#tekton-bundles) or [TaskRuns](taskruns.md#tekton-bun
 `Tekton Bundles` may be constructed with any toolsets that produce valid OCI image artifacts
 so long as the artifact adheres to the [contract](tekton-bundle-contracts.md).
 
+#### Remote Pipelines
 
-## Specifying `Resources`
+**([alpha only](https://github.com/tektoncd/pipeline/blob/main/docs/install.md#alpha-features))**
+
+**Warning: This feature is still in very early stage of development and is not yet functional. Do not use it.**
+
+A `pipelineRef` field may specify a Pipeline in a remote location such as git.
+Support for specific types of remote will depend on the Resolvers your
+cluster's operator has installed. The below example demonstrates
+referencing a Pipeline in git:
+
+```yaml
+spec:
+  pipelineRef:
+    resolver: git
+    resource:
+    - name: repo
+      value: https://github.com/tektoncd/catalog.git
+    - name: commit
+      value: abc123
+    - name: path
+      value: /pipeline/buildpacks/0.1/buildpacks.yaml
+```
+
+### Specifying `Resources`
+
+> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
+>
+> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
+> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
 
 A `Pipeline` requires [`PipelineResources`](resources.md) to provide inputs and store outputs
 for the `Tasks` that comprise it. You must provision those resources in the `resources` field
@@ -514,6 +547,7 @@ spec:
 
 If you do not specify the `timeout` value or `timeouts.pipeline` in the `PipelineRun`, the global default timeout value applies.
 If you set the `timeout` value or `timeouts.pipeline` to 0, the `PipelineRun` fails immediately upon encountering an error.
+If `timeouts.tasks` or `timeouts.finally` is set to 0, `timeouts.pipeline` must also be set to 0.
 
 The global default timeout is set to 60 minutes when you first install Tekton. You can set
 a different global default timeout value using the `default-timeout-minutes` field in
@@ -543,7 +577,7 @@ conditions:
     type: Succeeded
 startTime: "2020-05-04T02:00:11Z"
 taskRuns:
-  triggers-release-nightly-frwmw-build-ng2qk:
+  triggers-release-nightly-frwmw-build:
     pipelineTaskName: build
     status:
       completionTime: "2020-05-04T02:10:49Z"
@@ -553,7 +587,7 @@ taskRuns:
           reason: Succeeded
           status: "True"
           type: Succeeded
-      podName: triggers-release-nightly-frwmw-build-ng2qk-pod-8vj99
+      podName: triggers-release-nightly-frwmw-build-pod
       resourcesResult:
         - key: commit
           resourceRef:
@@ -612,7 +646,7 @@ Skipped Tasks:
     Values:
       foo
 Task Runs:
-  pipelinerun-to-skip-task-run-this-task-r2djj:
+  pipelinerun-to-skip-task-run-this-task:
     Pipeline Task Name:  run-this-task
     Status:
       ...
@@ -622,6 +656,20 @@ Task Runs:
       Values:
         foo
 ```
+
+The name of the `TaskRuns` and `Runs` owned by a `PipelineRun`  are univocally associated to the owning resource.
+If a `PipelineRun` resource is deleted and created with the same name, the child `TaskRuns` will be created with the
+same name as before. The base format of the name is `<pipelinerun-name>-<pipelinetask-name>`. The name may vary
+according the logic of [`kmeta.ChildName`](https://pkg.go.dev/github.com/knative/pkg/kmeta#ChildName).
+
+Some examples:
+
+| `PipelineRun` Name       | `PipelineTask` Name          | `TaskRun` Name     |
+|--------------------------|------------------------------|--------------------|
+| pipeline-run             | task1                        | pipeline-run-task1 |
+| pipeline-run             | task2-0123456789-0123456789-0123456789-0123456789-0123456789 | pipeline-runee4a397d6eab67777d4e6f9991cd19e6-task2-0123456789-0 |
+| pipeline-run-0123456789-0123456789-0123456789-0123456789 | task3 | pipeline-run-0123456789-0123456789-0123456789-0123456789-task3 |
+| pipeline-run-0123456789-0123456789-0123456789-0123456789 | task2-0123456789-0123456789-0123456789-0123456789-0123456789 | pipeline-run-0123456789-012345607ad8c7aac5873cdfabe472a68996b5c |
 
 ## Cancelling a `PipelineRun`
 

@@ -6,7 +6,7 @@ weight: 1400
 -->
 # Pod templates
 
-A Pod template defines a portion of a [`PodSpec`](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.18/#pod-v1-core)
+A Pod template defines a portion of a [`PodSpec`](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.20/#pod-v1-core)
 configuration that Tekton can use as "boilerplate" for a Pod that runs your `Tasks` and `Pipelines`.
 
 You can specify a Pod template for `TaskRuns` and `PipelineRuns`. In the template, you can specify custom values for fields governing
@@ -94,6 +94,40 @@ Pod templates support fields listed in the table below.
 		</tr>
 	</tbody>
 </table>
+
+## Use `imagePullSecrets` to lookup entrypoint
+
+If no command is configured in `task` and `imagePullSecrets` is configured in `podTemplate`, the Tekton Controller will look up the entrypoint of image with `imagePullSecrets`. The Tekton controller's service account is given access to secrets by default. See [this](https://github.com/tektoncd/pipeline/blob/main/config/200-clusterrole.yaml) for reference. If the Tekton controller's service account is not granted the access to secrets in different namespace, you need to grant the access via `RoleBinding`:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: creds-getter
+  namespace: my-ns
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["creds"]
+  verbs: ["get"]
+```
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: creds-getter-binding
+  namespace: my-ns
+subjects:
+- kind: ServiceAccount
+  name: tekton-pipelines-controller
+  namespace: tekton-pipelines
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: creds-getter
+  apiGroup: rbac.authorization.k8s.io
+```
 
 ---
 
