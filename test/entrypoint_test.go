@@ -1,3 +1,4 @@
+//go:build e2e
 // +build e2e
 
 /*
@@ -24,12 +25,10 @@ import (
 	"testing"
 
 	"github.com/tektoncd/pipeline/test/parse"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	knativetest "knative.dev/pkg/test"
+	"knative.dev/pkg/test/helpers"
 )
-
-const epTaskRunName = "ep-task-run"
 
 // TestEntrypointRunningStepsInOrder is an integration test that will
 // verify attempt to the get the entrypoint of a container image
@@ -45,8 +44,10 @@ func TestEntrypointRunningStepsInOrder(t *testing.T) {
 	knativetest.CleanupOnInterrupt(func() { tearDown(ctx, t, c, namespace) }, t.Logf)
 	defer tearDown(ctx, t, c, namespace)
 
+	epTaskRunName := helpers.ObjectNameForTest(t)
+
 	t.Logf("Creating TaskRun in namespace %s", namespace)
-	if _, err := c.TaskRunClient.Create(ctx, parse.MustParseTaskRun(t, fmt.Sprintf(`
+	if _, err := c.V1TaskRunClient.Create(ctx, parse.MustParseV1TaskRun(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
@@ -64,8 +65,7 @@ spec:
 	}
 
 	t.Logf("Waiting for TaskRun in namespace %s to finish successfully", namespace)
-	if err := WaitForTaskRunState(ctx, c, epTaskRunName, TaskRunSucceed(epTaskRunName), "TaskRunSuccess"); err != nil {
+	if err := WaitForTaskRunState(ctx, c, epTaskRunName, TaskRunSucceed(epTaskRunName), "TaskRunSuccess", v1Version); err != nil {
 		t.Errorf("Error waiting for TaskRun to finish successfully: %s", err)
 	}
-
 }

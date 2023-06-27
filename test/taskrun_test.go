@@ -1,3 +1,4 @@
+//go:build e2e
 // +build e2e
 
 /*
@@ -25,15 +26,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tektoncd/pipeline/test/parse"
-
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
+	v1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
 	"github.com/tektoncd/pipeline/pkg/pod"
+	"github.com/tektoncd/pipeline/test/parse"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	knativetest "knative.dev/pkg/test"
+	"knative.dev/pkg/test/helpers"
 )
 
 func TestTaskRunFailure(t *testing.T) {
@@ -47,12 +48,12 @@ func TestTaskRunFailure(t *testing.T) {
 	knativetest.CleanupOnInterrupt(func() { tearDown(ctx, t, c, namespace) }, t.Logf)
 	defer tearDown(ctx, t, c, namespace)
 
-	taskRunName := "failing-taskrun"
+	taskRunName := helpers.ObjectNameForTest(t)
 
 	t.Logf("Creating Task and TaskRun in namespace %s", namespace)
-	task := parse.MustParseTask(t, fmt.Sprintf(`
+	task := parse.MustParseV1Task(t, fmt.Sprintf(`
 metadata:
-  name: failing-task
+  name: %s
   namespace: %s
 spec:
   steps:
@@ -65,41 +66,41 @@ spec:
   - image: busybox
     command: ['/bin/sh']
     args: ['-c', 'sleep 30s']
-`, namespace))
-	if _, err := c.TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
+`, helpers.ObjectNameForTest(t), namespace))
+	if _, err := c.V1TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create Task: %s", err)
 	}
-	taskRun := parse.MustParseTaskRun(t, fmt.Sprintf(`
+	taskRun := parse.MustParseV1TaskRun(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
 spec:
   taskRef:
-    name: failing-task
-`, taskRunName, namespace))
-	if _, err := c.TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
+    name: %s
+`, taskRunName, namespace, task.Name))
+	if _, err := c.V1TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create TaskRun: %s", err)
 	}
 
 	t.Logf("Waiting for TaskRun in namespace %s to fail", namespace)
-	if err := WaitForTaskRunState(ctx, c, taskRunName, TaskRunFailed(taskRunName), "TaskRunFailed"); err != nil {
+	if err := WaitForTaskRunState(ctx, c, taskRunName, TaskRunFailed(taskRunName), "TaskRunFailed", v1Version); err != nil {
 		t.Errorf("Error waiting for TaskRun to finish: %s", err)
 	}
 
-	taskrun, err := c.TaskRunClient.Get(ctx, taskRunName, metav1.GetOptions{})
+	taskrun, err := c.V1TaskRunClient.Get(ctx, taskRunName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Couldn't get expected TaskRun %s: %s", taskRunName, err)
 	}
 
-	expectedStepState := []v1beta1.StepState{{
+	expectedStepState := []v1.StepState{{
 		ContainerState: corev1.ContainerState{
 			Terminated: &corev1.ContainerStateTerminated{
 				ExitCode: 0,
 				Reason:   "Completed",
 			},
 		},
-		Name:          "unnamed-0",
-		ContainerName: "step-unnamed-0",
+		Name:      "unnamed-0",
+		Container: "step-unnamed-0",
 	}, {
 		ContainerState: corev1.ContainerState{
 			Terminated: &corev1.ContainerStateTerminated{
@@ -107,8 +108,8 @@ spec:
 				Reason:   "Error",
 			},
 		},
-		Name:          "unnamed-1",
-		ContainerName: "step-unnamed-1",
+		Name:      "unnamed-1",
+		Container: "step-unnamed-1",
 	}, {
 		ContainerState: corev1.ContainerState{
 			Terminated: &corev1.ContainerStateTerminated{
@@ -116,18 +117,18 @@ spec:
 				Reason:   "Error",
 			},
 		},
-		Name:          "unnamed-2",
-		ContainerName: "step-unnamed-2",
+		Name:      "unnamed-2",
+		Container: "step-unnamed-2",
 	}}
 	ignoreTerminatedFields := cmpopts.IgnoreFields(corev1.ContainerStateTerminated{}, "StartedAt", "FinishedAt", "ContainerID")
-	ignoreStepFields := cmpopts.IgnoreFields(v1beta1.StepState{}, "ImageID")
+	ignoreStepFields := cmpopts.IgnoreFields(v1.StepState{}, "ImageID")
 	if d := cmp.Diff(taskrun.Status.Steps, expectedStepState, ignoreTerminatedFields, ignoreStepFields); d != "" {
 		t.Fatalf("-got, +want: %v", d)
 	}
 
 	releaseAnnotation, ok := taskrun.Annotations[pod.ReleaseAnnotation]
-	// This should always contain a commit truncated to ~7 characters (based on knative.dev/pkg/changeset)
-	commitIDRegexp := regexp.MustCompile(`^[a-f0-9]{7}$`)
+	// This should always contain a commit truncated to 7 characters, possibly with "-dirty" suffix (based on knative.dev/pkg/changeset)
+	commitIDRegexp := regexp.MustCompile(`^[a-f0-9]{7}(-dirty)?$`)
 	if !ok || !commitIDRegexp.MatchString(releaseAnnotation) {
 		t.Fatalf("expected Taskrun to be annotated with %s=devel or with nightly release tag, got %s=%s", pod.ReleaseAnnotation, pod.ReleaseAnnotation, releaseAnnotation)
 	}
@@ -143,59 +144,59 @@ func TestTaskRunStatus(t *testing.T) {
 	knativetest.CleanupOnInterrupt(func() { tearDown(ctx, t, c, namespace) }, t.Logf)
 	defer tearDown(ctx, t, c, namespace)
 
-	taskRunName := "status-taskrun"
+	taskRunName := helpers.ObjectNameForTest(t)
 
 	fqImageName := getTestImage(busyboxImage)
 
 	t.Logf("Creating Task and TaskRun in namespace %s", namespace)
-	task := parse.MustParseTask(t, fmt.Sprintf(`
+	task := parse.MustParseV1Task(t, fmt.Sprintf(`
 metadata:
-  name: status-task
+  name: %s
   namespace: %s
 spec:
   steps:
   - image: %s
     command: ['/bin/sh']
     args: ['-c', 'echo hello']
-`, namespace, fqImageName))
-	if _, err := c.TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
+`, helpers.ObjectNameForTest(t), namespace, fqImageName))
+	if _, err := c.V1TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create Task: %s", err)
 	}
-	taskRun := parse.MustParseTaskRun(t, fmt.Sprintf(`
+	taskRun := parse.MustParseV1TaskRun(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
 spec:
   taskRef:
-    name: status-task
-`, taskRunName, namespace))
-	if _, err := c.TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
+    name: %s
+`, taskRunName, namespace, task.Name))
+	if _, err := c.V1TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create TaskRun: %s", err)
 	}
 
 	t.Logf("Waiting for TaskRun in namespace %s to fail", namespace)
-	if err := WaitForTaskRunState(ctx, c, taskRunName, TaskRunSucceed(taskRunName), "TaskRunSucceed"); err != nil {
+	if err := WaitForTaskRunState(ctx, c, taskRunName, TaskRunSucceed(taskRunName), "TaskRunSucceed", v1Version); err != nil {
 		t.Errorf("Error waiting for TaskRun to finish: %s", err)
 	}
 
-	taskrun, err := c.TaskRunClient.Get(ctx, taskRunName, metav1.GetOptions{})
+	taskrun, err := c.V1TaskRunClient.Get(ctx, taskRunName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Couldn't get expected TaskRun %s: %s", taskRunName, err)
 	}
 
-	expectedStepState := []v1beta1.StepState{{
+	expectedStepState := []v1.StepState{{
 		ContainerState: corev1.ContainerState{
 			Terminated: &corev1.ContainerStateTerminated{
 				ExitCode: 0,
 				Reason:   "Completed",
 			},
 		},
-		Name:          "unnamed-0",
-		ContainerName: "step-unnamed-0",
+		Name:      "unnamed-0",
+		Container: "step-unnamed-0",
 	}}
 
 	ignoreTerminatedFields := cmpopts.IgnoreFields(corev1.ContainerStateTerminated{}, "StartedAt", "FinishedAt", "ContainerID")
-	ignoreStepFields := cmpopts.IgnoreFields(v1beta1.StepState{}, "ImageID")
+	ignoreStepFields := cmpopts.IgnoreFields(v1.StepState{}, "ImageID")
 	if d := cmp.Diff(taskrun.Status.Steps, expectedStepState, ignoreTerminatedFields, ignoreStepFields); d != "" {
 		t.Fatalf("-got, +want: %v", d)
 	}

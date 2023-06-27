@@ -1,3 +1,4 @@
+//go:build e2e
 // +build e2e
 
 /*
@@ -20,86 +21,67 @@ package test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	v1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
+	"github.com/tektoncd/pipeline/test/diff"
 	"github.com/tektoncd/pipeline/test/parse"
-
-	"github.com/tektoncd/pipeline/pkg/reconciler/pipelinerun"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"knative.dev/pkg/apis"
 	knativetest "knative.dev/pkg/test"
 )
 
-func TestMissingResultWhenStepErrorIsIgnored(t *testing.T) {
+func TestFailingStepOnContinue(t *testing.T) {
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	c, namespace := setup(ctx, t)
 	knativetest.CleanupOnInterrupt(func() { tearDown(ctx, t, c, namespace) }, t.Logf)
 	defer tearDown(ctx, t, c, namespace)
-
-	pipelineRun := parse.MustParsePipelineRun(t, `
+	taskRunName := "mytaskrun"
+	tr := parse.MustParseV1TaskRun(t, fmt.Sprintf(`
 metadata:
-  name: pipelinerun-with-failing-step
+  name: %s
+  namespace: %s
 spec:
-  pipelineSpec:
-    tasks:
-    - name: task1
-      taskSpec:
-        results:
-        - name: result1
-        - name: result2
-        steps:
-        - name: failing-step
-          onError: continue
-          image: busybox
-          script: 'echo -n 123 | tee $(results.result1.path); exit 1; echo -n 456 | tee $(results.result2.path)'
-    - name: task2
-      runAfter: [ task1 ]
-      params:
-      - name: param1
-        value: $(tasks.task1.results.result1)
-      - name: param2
-        value: $(tasks.task1.results.result2)
-      taskSpec:
-        params:
-        - name: param1
-        - name: param2
-        steps:
-        - name: foo
-          image: busybox
-          script: 'exit 0'`)
+  taskSpec:
+    results:
+      - name: result1
+      - name: result2
+    steps:
+      - name: failing-step
+        onError: continue
+        image: busybox
+        script: 'echo -n 123 | tee $(results.result1.path); exit 1; echo -n 456 | tee $(results.result2.path)'
+`, taskRunName, namespace))
 
-	if _, err := c.PipelineRunClient.Create(ctx, pipelineRun, metav1.CreateOptions{}); err != nil {
-		t.Fatalf("Failed to create PipelineRun `%s`: %s", pipelineRun.Name, err)
+	if _, err := c.V1TaskRunClient.Create(ctx, tr, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("Failed to create TaskRun: %s", err)
 	}
 
-	t.Logf("Waiting for PipelineRun in namespace %s to fail", namespace)
-	if err := WaitForPipelineRunState(ctx, c, pipelineRun.Name, timeout, FailedWithReason(pipelinerun.ReasonInvalidTaskResultReference, pipelineRun.Name), "InvalidTaskResultReference"); err != nil {
-		t.Errorf("Error waiting for PipelineRun to fail: %s", err)
+	t.Logf("Waiting for TaskRun in namespace %s to finish", namespace)
+	if err := WaitForTaskRunState(ctx, c, taskRunName, TaskRunSucceed(taskRunName), "TaskRunSucceeded", v1Version); err != nil {
+		t.Errorf("Error waiting for TaskRun to finish: %s", err)
 	}
 
-	taskrunList, err := c.TaskRunClient.List(ctx, metav1.ListOptions{LabelSelector: "tekton.dev/pipelineRun=" + pipelineRun.Name})
+	taskRun, err := c.V1TaskRunClient.Get(ctx, taskRunName, metav1.GetOptions{})
 	if err != nil {
-		t.Fatalf("Error listing TaskRuns for PipelineRun %s: %s", pipelineRun.Name, err)
+		t.Fatalf("Couldn't get expected TaskRun %s: %s", taskRunName, err)
 	}
 
-	if len(taskrunList.Items) != 1 {
-		t.Fatalf("The pipelineRun should have exactly 1 taskRun for the first task \"task1\"")
+	if !taskRun.Status.GetCondition(apis.ConditionSucceeded).IsTrue() {
+		t.Fatalf("Expected TaskRun %s to have succeeded but Status is %v", taskRunName, taskRun.Status)
 	}
 
-	taskrunItem := taskrunList.Items[0]
-	if taskrunItem.Labels["tekton.dev/pipelineTask"] != "task1" {
-		t.Fatalf("TaskRun was not found for the task \"task1\"")
-	}
+	expectedResults := []v1.TaskRunResult{{
+		Name:  "result1",
+		Type:  "string",
+		Value: *v1.NewStructuredValues("123"),
+	}}
 
-	if len(taskrunItem.Status.TaskRunResults) != 1 {
-		t.Fatalf("task1 should have produced a result before failing the step")
+	if d := cmp.Diff(expectedResults, taskRun.Status.Results); d != "" {
+		t.Errorf("Got unexpected results %s", diff.PrintWantGot(d))
 	}
-
-	for _, r := range taskrunItem.Status.TaskRunResults {
-		if r.Name == "result1" && r.Value != "123" {
-			t.Fatalf("task1 should have initialized a result \"result1\" to \"123\"")
-		}
-	}
-
 }

@@ -1,16 +1,18 @@
 <!--
 ---
 linkTitle: "Events"
-weight: 700
+weight: 302
 ---
 -->
+
 # Events in Tekton
 
-Tekton's task controller emits [Kubernetes events](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.18/#event-v1-core)
+Tekton's controllers emits [Kubernetes events](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.18/#event-v1-core)
 when `TaskRuns` and `PipelineRuns` execute. This allows you to monitor and react to what's happening during execution by
 retrieving those events using the `kubectl describe` command. Tekton can also emit [CloudEvents](https://github.com/cloudevents/spec).
 
-**Note:** `Conditions` [do not yet emit events](https://github.com/tektoncd/pipeline/issues/2461).
+**Note:** `Conditions` [do not emit events](https://github.com/tektoncd/pipeline/issues/2461)
+but the underlying `TaskRun` do.
 
 ## Events in `TaskRuns`
 
@@ -48,12 +50,12 @@ retrieving those events using the `kubectl describe` command. Tekton can also em
 
 # Events via `CloudEvents`
 
-When you [configure a sink](install.md#configuring-cloudevents-notifications), Tekton emits
+When you [configure a sink](./additional-configs.md#configuring-cloudevents-notifications), Tekton emits
 events as described in the table below.
 
 Tekton sends cloud events in a parallel routine to allow for retries without blocking the
 reconciler. A routine is started every time the `Succeeded` condition changes - either state,
-reason or message. Retries are sent using an exponential back-off strategy. 
+reason or message. Retries are sent using an exponential back-off strategy.
 Because of retries, events are not guaranteed to be sent to the target sink in the order they happened.
 
 Resource      |Event    |Event Type
@@ -68,10 +70,20 @@ Resource      |Event    |Event Type
 `PipelineRun` | `Condition Change while Running` | `dev.tekton.event.pipelinerun.unknown.v1`
 `PipelineRun` | `Succeed` | `dev.tekton.event.pipelinerun.successful.v1`
 `PipelineRun` | `Failed`  | `dev.tekton.event.pipelinerun.failed.v1`
+`Run`         | `Started` | `dev.tekton.event.run.started.v1`
+`Run`         | `Running` | `dev.tekton.event.run.running.v1`
+`Run`         | `Succeed` | `dev.tekton.event.run.successful.v1`
+`Run`         | `Failed`  | `dev.tekton.event.run.failed.v1`
+
+`CloudEvents` for `Runs` are only sent when enabled in the [configuration](./additional-configs.md#configuring-cloudevents-notifications).
+
+**Note**: `CloudEvents` for `Runs` rely on an ephemeral cache to avoid duplicate
+events. In case of controller restart, the cache is reset and duplicate events
+may be sent.
 
 ## Format of `CloudEvents`
 
-According to the [`CloudEvents` spec](https://github.com/cloudevents/spec/blob/master/spec.md), HTTP headers are included to match the context fields. For example:
+According to the [`CloudEvents` spec](https://github.com/cloudevents/spec/blob/main/cloudevents/spec.md), HTTP headers are included to match the context fields. For example:
 
 ```
 "Ce-Id": "77f78ae7-ff6d-4e39-9d05-b9a0b7850527",

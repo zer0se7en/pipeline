@@ -19,15 +19,39 @@
 
 source $(git rev-parse --show-toplevel)/test/e2e-common.sh
 
+
+# Setting defaults
+PIPELINE_FEATURE_GATE=${PIPELINE_FEATURE_GATE:-stable}
+SKIP_INITIALIZE=${SKIP_INITIALIZE:="false"}
+RUN_YAML_TESTS=${RUN_YAML_TESTS:="true"}
+SKIP_GO_E2E_TESTS=${SKIP_GO_E2E_TESTS:="false"}
+E2E_GO_TEST_TIMEOUT=${E2E_GO_TEST_TIMEOUT:="20m"}
+RESULTS_FROM=${RESULTS_FROM:-termination-message}
+failed=0
+
 # Script entry point.
 
-initialize $@
+if [ "${SKIP_INITIALIZE}" != "true" ]; then
+  initialize $@
+fi
 
 header "Setting up environment"
 
 install_pipeline_crd
 
 failed=0
+
+function add_spire() {
+  local gate="$1"
+  if [ "$gate" == "alpha" ] ; then
+    DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+    printf "Setting up environment for alpha features"
+    install_spire
+    patch_pipeline_spire
+    kubectl apply -n tekton-pipelines -f "$DIR"/testdata/spire/config-spire.yaml
+    failed=0
+  fi
+}
 
 function set_feature_gate() {
   local gate="$1"
@@ -41,25 +65,38 @@ function set_feature_gate() {
   kubectl patch configmap feature-flags -n tekton-pipelines -p "$jsonpatch"
 }
 
+function set_result_extraction_method() {
+  local method="$1"
+  if [ "$method" != "termination-message" ] && [ "$method" != "sidecar-logs" ]; then
+    printf "Invalid value for results-from %s\n" ${method}
+    exit 255
+  fi
+  printf "Setting results-from to %s\n", ${method}
+  jsonpatch=$(printf "{\"data\": {\"results-from\": \"%s\"}}" $1)
+  echo "feature-flags ConfigMap patch: ${jsonpatch}"
+  kubectl patch configmap feature-flags -n tekton-pipelines -p "$jsonpatch"
+}
+
 function run_e2e() {
   # Run the integration tests
   header "Running Go e2e tests"
-  go_test_e2e -timeout=20m ./test/... || failed=1
+  # Skip ./test/*.go tests if SKIP_GO_E2E_TESTS == true
+  if [ "${SKIP_GO_E2E_TESTS}" != "true" ]; then
+    go_test_e2e -timeout=${E2E_GO_TEST_TIMEOUT} ./test/... || failed=1
+  fi
 
   # Run these _after_ the integration tests b/c they don't quite work all the way
   # and they cause a lot of noise in the logs, making it harder to debug integration
   # test failures.
-  go_test_e2e -tags=examples -timeout=20m ./test/ || failed=1
+  if [ "${RUN_YAML_TESTS}" == "true" ]; then
+    go_test_e2e -mod=readonly -tags=examples -timeout=${E2E_GO_TEST_TIMEOUT} ./test/ || failed=1
+  fi
 }
 
-if [ "$PIPELINE_FEATURE_GATE" == "" ]; then
-  set_feature_gate "stable"
-  run_e2e
-else
-  set_feature_gate "$PIPELINE_FEATURE_GATE"
-  run_e2e
-fi
-
+add_spire "$PIPELINE_FEATURE_GATE"
+set_feature_gate "$PIPELINE_FEATURE_GATE"
+set_result_extraction_method "$RESULTS_FROM"
+run_e2e
 
 (( failed )) && fail_test
 success

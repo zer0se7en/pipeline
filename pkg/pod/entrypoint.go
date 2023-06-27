@@ -26,7 +26,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
+	"github.com/tektoncd/pipeline/pkg/apis/config"
+	"github.com/tektoncd/pipeline/pkg/apis/pipeline"
+	v1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
 	"gomodules.xyz/jsonpatch/v2"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -41,7 +43,12 @@ const (
 	entrypointBinary = binDir + "/entrypoint"
 
 	runVolumeName = "tekton-internal-run"
-	runDir        = "/tekton/run"
+
+	// RunDir is the directory that contains runtime variable data for TaskRuns.
+	// This includes files for handling container ordering, exit status codes, and more.
+	// See [https://github.com/tektoncd/pipeline/blob/main/docs/developers/taskruns.md#tekton]
+	// for more details.
+	RunDir = "/tekton/run"
 
 	downwardVolumeName     = "tekton-internal-downward"
 	downwardMountPoint     = "/tekton/downward"
@@ -70,6 +77,10 @@ var (
 	binVolume = corev1.Volume{
 		Name:         binVolumeName,
 		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+	}
+	internalStepsMount = corev1.VolumeMount{
+		Name:      "tekton-internal-steps",
+		MountPath: pipeline.StepsDir,
 	}
 
 	// TODO(#1605): Signal sidecar readiness by injecting entrypoint,
@@ -103,42 +114,49 @@ var (
 // command, we must have fetched the image's ENTRYPOINT before calling this
 // method, using entrypoint_lookup.go.
 // Additionally, Step timeouts are added as entrypoint flag.
-func orderContainers(commonExtraEntrypointArgs []string, steps []corev1.Container, taskSpec *v1beta1.TaskSpec, breakpointConfig *v1beta1.TaskRunDebug) ([]corev1.Container, error) {
+func orderContainers(commonExtraEntrypointArgs []string, steps []corev1.Container, taskSpec *v1.TaskSpec, breakpointConfig *v1.TaskRunDebug, waitForReadyAnnotation bool) ([]corev1.Container, error) {
 	if len(steps) == 0 {
 		return nil, errors.New("No steps specified")
 	}
 
 	for i, s := range steps {
-		var argsForEntrypoint []string
+		var argsForEntrypoint = []string{}
 		idx := strconv.Itoa(i)
-		switch i {
-		case 0:
-			argsForEntrypoint = []string{
-				// First step waits for the Downward volume file.
-				"-wait_file", filepath.Join(downwardMountPoint, downwardMountReadyFile),
-				"-wait_file_content", // Wait for file contents, not just an empty file.
-				// Start next step.
-				"-post_file", filepath.Join(runDir, idx, "out"),
-				"-termination_path", terminationPath,
-				"-step_metadata_dir", filepath.Join(runDir, idx, "status"),
+		if i == 0 {
+			if waitForReadyAnnotation {
+				argsForEntrypoint = append(argsForEntrypoint,
+					// First step waits for the Downward volume file.
+					"-wait_file", filepath.Join(downwardMountPoint, downwardMountReadyFile),
+					"-wait_file_content", // Wait for file contents, not just an empty file.
+				)
 			}
-		default:
-			// All other steps wait for previous file, write next file.
-			argsForEntrypoint = []string{
-				"-wait_file", filepath.Join(runDir, strconv.Itoa(i-1), "out"),
-				"-post_file", filepath.Join(runDir, idx, "out"),
-				"-termination_path", terminationPath,
-				"-step_metadata_dir", filepath.Join(runDir, idx, "status"),
-			}
+		} else { // Not the first step - wait for previous
+			argsForEntrypoint = append(argsForEntrypoint, "-wait_file", filepath.Join(RunDir, strconv.Itoa(i-1), "out"))
 		}
+		argsForEntrypoint = append(argsForEntrypoint,
+			// Start next step.
+			"-post_file", filepath.Join(RunDir, idx, "out"),
+			"-termination_path", terminationPath,
+			"-step_metadata_dir", filepath.Join(RunDir, idx, "status"),
+		)
 		argsForEntrypoint = append(argsForEntrypoint, commonExtraEntrypointArgs...)
 		if taskSpec != nil {
 			if taskSpec.Steps != nil && len(taskSpec.Steps) >= i+1 {
+				if taskSpec.Steps[i].OnError != "" {
+					if taskSpec.Steps[i].OnError != v1.Continue && taskSpec.Steps[i].OnError != v1.StopAndFail {
+						return nil, fmt.Errorf("task step onError must be either \"%s\" or \"%s\" but it is set to an invalid value \"%s\"",
+							v1.Continue, v1.StopAndFail, taskSpec.Steps[i].OnError)
+					}
+					argsForEntrypoint = append(argsForEntrypoint, "-on_error", string(taskSpec.Steps[i].OnError))
+				}
 				if taskSpec.Steps[i].Timeout != nil {
 					argsForEntrypoint = append(argsForEntrypoint, "-timeout", taskSpec.Steps[i].Timeout.Duration.String())
 				}
-				if taskSpec.Steps[i].OnError != "" {
-					argsForEntrypoint = append(argsForEntrypoint, "-on_error", taskSpec.Steps[i].OnError)
+				if taskSpec.Steps[i].StdoutConfig != nil {
+					argsForEntrypoint = append(argsForEntrypoint, "-stdout_path", taskSpec.Steps[i].StdoutConfig.Path)
+				}
+				if taskSpec.Steps[i].StderrConfig != nil {
+					argsForEntrypoint = append(argsForEntrypoint, "-stderr_path", taskSpec.Steps[i].StderrConfig.Path)
 				}
 			}
 			argsForEntrypoint = append(argsForEntrypoint, resultArgument(steps, taskSpec.Results)...)
@@ -168,20 +186,22 @@ func orderContainers(commonExtraEntrypointArgs []string, steps []corev1.Containe
 		steps[i].Args = argsForEntrypoint
 		steps[i].TerminationMessagePath = terminationPath
 	}
-	// Mount the Downward volume into the first step container.
-	steps[0].VolumeMounts = append(steps[0].VolumeMounts, downwardMount)
+	if waitForReadyAnnotation {
+		// Mount the Downward volume into the first step container.
+		steps[0].VolumeMounts = append(steps[0].VolumeMounts, downwardMount)
+	}
 
 	return steps, nil
 }
 
-func resultArgument(steps []corev1.Container, results []v1beta1.TaskResult) []string {
+func resultArgument(steps []corev1.Container, results []v1.TaskResult) []string {
 	if len(results) == 0 {
 		return nil
 	}
 	return []string{"-results", collectResultsName(results)}
 }
 
-func collectResultsName(results []v1beta1.TaskResult) string {
+func collectResultsName(results []v1.TaskResult) string {
 	var resultNames []string
 	for _, r := range results {
 		resultNames = append(resultNames, r.Name)
@@ -208,6 +228,11 @@ func init() {
 // UpdateReady updates the Pod's annotations to signal the first step to start
 // by projecting the ready annotation via the Downward API.
 func UpdateReady(ctx context.Context, kubeclient kubernetes.Interface, pod corev1.Pod) error {
+	// Don't PATCH if the annotation is already Ready.
+	if pod.Annotations[readyAnnotation] == readyAnnotationValue {
+		return nil
+	}
+
 	// PATCH the Pod's annotations to replace the ready annotation with the
 	// "READY" value, to signal the first step to start.
 	_, err := kubeclient.CoreV1().Pods(pod.Namespace).Patch(ctx, pod.Name, types.JSONPatchType, replaceReadyPatchBytes, metav1.PatchOptions{})
@@ -228,6 +253,12 @@ func StopSidecars(ctx context.Context, nopImage string, kubeclient kubernetes.In
 	updated := false
 	if newPod.Status.Phase == corev1.PodRunning {
 		for _, s := range newPod.Status.ContainerStatuses {
+			// If the results-from is set to sidecar logs,
+			// a sidecar container with name `sidecar-log-results` is injected by the reconiler.
+			// Do not kill this sidecar. Let it exit gracefully.
+			if config.FromContextOrDefaults(ctx).FeatureFlags.ResultExtractionMethod == config.ResultExtractionMethodSidecarLogs && s.Name == pipeline.ReservedResultsSidecarContainerName {
+				continue
+			}
 			// Stop any running container that isn't a step.
 			// An injected sidecar container might not have the
 			// "sidecar-" prefix, so we can't just look for that
@@ -252,7 +283,7 @@ func StopSidecars(ctx context.Context, nopImage string, kubeclient kubernetes.In
 
 // IsSidecarStatusRunning determines if any SidecarStatus on a TaskRun
 // is still running.
-func IsSidecarStatusRunning(tr *v1beta1.TaskRun) bool {
+func IsSidecarStatusRunning(tr *v1.TaskRun) bool {
 	for _, sidecar := range tr.Status.Sidecars {
 		if sidecar.Terminated == nil {
 			return true

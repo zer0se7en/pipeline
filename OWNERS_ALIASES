@@ -3,21 +3,25 @@ aliases:
   - afrittoli
   - bobcatfish
   - dibyom
-  - dlorenc
   - ImJasonH
   - vdemeester
   - pritidesai
   - jerop
+  - lbernick
+  - abayer
+  - wlynch
 
   apis-approvers:
   - afrittoli
   - bobcatfish
   - dibyom
-  - dlorenc
   - ImJasonH
   - vdemeester
   - pritidesai
   - jerop
+  - lbernick
+  - abayer
+  - wlynch
 
   productivity-approvers:
   - afrittoli
@@ -33,5 +37,5 @@ aliases:
 # pivotal-nader-ziada
 # shashwathi
 # aaron-prindle
-# abayer
 # sbwsg
+# dlorenc

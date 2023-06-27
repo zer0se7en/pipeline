@@ -17,20 +17,20 @@ limitations under the License.
 package main
 
 import (
-	"io/ioutil"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 	"time"
 )
 
-const testWaitPollingInterval = 10 * time.Millisecond
+const testWaitPollingInterval = 50 * time.Millisecond
 
 func TestRealWaiterWaitMissingFile(t *testing.T) {
 	// Create a temp file and then immediately delete it to get
 	// a legitimate tmp path and ensure the file doesnt exist
 	// prior to testing Wait().
-	tmp, err := ioutil.TempFile("", "real_waiter_test_file")
+	tmp, err := os.CreateTemp("", "real_waiter_test_file")
 	if err != nil {
 		t.Errorf("error creating temp file: %v", err)
 	}
@@ -44,16 +44,21 @@ func TestRealWaiterWaitMissingFile(t *testing.T) {
 		}
 		close(doneCh)
 	}()
+
+	delay := time.NewTimer(2 * testWaitPollingInterval)
 	select {
+	case <-delay.C:
+		// Success
 	case <-doneCh:
 		t.Errorf("did not expect Wait() to have detected a file at path %q", tmp.Name())
-	case <-time.After(2 * testWaitPollingInterval):
-		// Success
+		if !delay.Stop() {
+			<-delay.C
+		}
 	}
 }
 
 func TestRealWaiterWaitWithFile(t *testing.T) {
-	tmp, err := ioutil.TempFile("", "real_waiter_test_file")
+	tmp, err := os.CreateTemp("", "real_waiter_test_file")
 	if err != nil {
 		t.Errorf("error creating temp file: %v", err)
 	}
@@ -67,16 +72,17 @@ func TestRealWaiterWaitWithFile(t *testing.T) {
 		}
 		close(doneCh)
 	}()
+	delay := time.NewTimer(2 * testWaitPollingInterval)
 	select {
 	case <-doneCh:
 		// Success
-	case <-time.After(2 * testWaitPollingInterval):
+	case <-delay.C:
 		t.Errorf("expected Wait() to have detected the file's existence by now")
 	}
 }
 
 func TestRealWaiterWaitMissingContent(t *testing.T) {
-	tmp, err := ioutil.TempFile("", "real_waiter_test_file")
+	tmp, err := os.CreateTemp("", "real_waiter_test_file")
 	if err != nil {
 		t.Errorf("error creating temp file: %v", err)
 	}
@@ -90,16 +96,20 @@ func TestRealWaiterWaitMissingContent(t *testing.T) {
 		}
 		close(doneCh)
 	}()
+	delay := time.NewTimer(2 * testWaitPollingInterval)
 	select {
+	case <-delay.C:
+		// Success
 	case <-doneCh:
 		t.Errorf("no data was written to tmp file, did not expect Wait() to have detected a non-zero file size and returned")
-	case <-time.After(2 * testWaitPollingInterval):
-		// Success
+		if !delay.Stop() {
+			<-delay.C
+		}
 	}
 }
 
 func TestRealWaiterWaitWithContent(t *testing.T) {
-	tmp, err := ioutil.TempFile("", "real_waiter_test_file")
+	tmp, err := os.CreateTemp("", "real_waiter_test_file")
 	if err != nil {
 		t.Errorf("error creating temp file: %v", err)
 	}
@@ -113,19 +123,20 @@ func TestRealWaiterWaitWithContent(t *testing.T) {
 		}
 		close(doneCh)
 	}()
-	if err := ioutil.WriteFile(tmp.Name(), []byte("😺"), 0700); err != nil {
+	if err := os.WriteFile(tmp.Name(), []byte("😺"), 0700); err != nil {
 		t.Errorf("error writing content to temp file: %v", err)
 	}
+	delay := time.NewTimer(2 * testWaitPollingInterval)
 	select {
 	case <-doneCh:
 		// Success
-	case <-time.After(2 * testWaitPollingInterval):
+	case <-delay.C:
 		t.Errorf("expected Wait() to have detected a non-zero file size by now")
 	}
 }
 
 func TestRealWaiterWaitWithErrorWaitfile(t *testing.T) {
-	tmp, err := ioutil.TempFile("", "real_waiter_test_file*.err")
+	tmp, err := os.CreateTemp("", "real_waiter_test_file*.err")
 	if err != nil {
 		t.Errorf("error creating temp file: %v", err)
 	}
@@ -139,23 +150,24 @@ func TestRealWaiterWaitWithErrorWaitfile(t *testing.T) {
 		if err == nil {
 			t.Errorf("expected skipError upon encounter error waitfile")
 		}
-		switch typ := err.(type) {
-		case skipError:
+		var skipErr skipError
+		if errors.As(err, &skipErr) {
 			close(doneCh)
-		default:
-			t.Errorf("unexpected error type %T", typ)
+		} else {
+			t.Errorf("unexpected error type %T", err)
 		}
 	}()
+	delay := time.NewTimer(2 * testWaitPollingInterval)
 	select {
 	case <-doneCh:
 		// Success
-	case <-time.After(2 * testWaitPollingInterval):
+	case <-delay.C:
 		t.Errorf("expected Wait() to have detected a non-zero file size by now")
 	}
 }
 
 func TestRealWaiterWaitWithBreakpointOnFailure(t *testing.T) {
-	tmp, err := ioutil.TempFile("", "real_waiter_test_file*.err")
+	tmp, err := os.CreateTemp("", "real_waiter_test_file*.err")
 	if err != nil {
 		t.Errorf("error creating temp file: %v", err)
 	}
@@ -171,10 +183,11 @@ func TestRealWaiterWaitWithBreakpointOnFailure(t *testing.T) {
 		}
 		close(doneCh)
 	}()
+	delay := time.NewTimer(2 * testWaitPollingInterval)
 	select {
 	case <-doneCh:
 		// Success
-	case <-time.After(2 * testWaitPollingInterval):
+	case <-delay.C:
 		t.Errorf("expected Wait() to have detected a non-zero file size by now")
 	}
 }

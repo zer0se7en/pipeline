@@ -34,6 +34,7 @@ type WhenExpression struct {
 
 	// Values is an array of strings, which is compared against the input, for guard checking
 	// It must be non-empty
+	// +listType=atomic
 	Values []string `json:"values"`
 }
 
@@ -61,8 +62,11 @@ func (we *WhenExpression) applyReplacements(replacements map[string]string, arra
 	for _, val := range we.Values {
 		// arrayReplacements holds a list of array parameters with a pattern - params.arrayParam1
 		// array params are referenced using $(params.arrayParam1[*])
+		// array results are referenced using $(results.resultname[*])
 		// check if the param exist in the arrayReplacements to replace it with a list of values
 		if _, ok := arrayReplacements[fmt.Sprintf("%s.%s", ParamsPrefix, ArrayReference(val))]; ok {
+			replacedValues = append(replacedValues, substitution.ApplyArrayReplacements(val, replacements, arrayReplacements)...)
+		} else if _, ok := arrayReplacements[ResultsArrayReference(val)]; ok {
 			replacedValues = append(replacedValues, substitution.ApplyArrayReplacements(val, replacements, arrayReplacements)...)
 		} else {
 			replacedValues = append(replacedValues, substitution.ApplyReplacements(val, replacements))
@@ -98,9 +102,9 @@ func (wes WhenExpressions) AllowsExecution() bool {
 	return true
 }
 
-// ReplaceWhenExpressionsVariables interpolates variables, such as Parameters and Results, in
+// ReplaceVariables interpolates variables, such as Parameters and Results, in
 // the Input and Values.
-func (wes WhenExpressions) ReplaceWhenExpressionsVariables(replacements map[string]string, arrayReplacements map[string][]string) WhenExpressions {
+func (wes WhenExpressions) ReplaceVariables(replacements map[string]string, arrayReplacements map[string][]string) WhenExpressions {
 	replaced := wes
 	for i := range wes {
 		replaced[i] = wes[i].applyReplacements(replacements, arrayReplacements)

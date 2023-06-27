@@ -1,9 +1,10 @@
 <!--
 ---
 linkTitle: "Variable Substitutions"
-weight: 900
+weight: 407
 ---
 -->
+
 # Variable Substitutions Supported by `Tasks` and `Pipelines`
 
 This page documents the variable substitutions supported by `Tasks` and `Pipelines`.
@@ -19,9 +20,18 @@ For instructions on using variable substitutions see the relevant section of [th
 | `params.<param name>` | The value of the parameter at runtime. |
 | `params['<param name>']` | (see above) |
 | `params["<param name>"]` | (see above) |
+| `params.<param name>[*]` | Get the whole param array or object.|
+| `params['<param name>'][*]` | (see above) |
+| `params["<param name>"][*]` | (see above) |
+| `params.<param name>[i]` | Get the i-th element of param array. This is alpha feature, set `enable-api-fields` to `alpha`  to use it.|
+| `params['<param name>'][i]` | (see above) |
+| `params["<param name>"][i]` | (see above) |
+| `params.<object-param-name>[*]` | Get the value of the whole object param. This is alpha feature, set `enable-api-fields` to `alpha`  to use it.|
+| `params.<object-param-name>.<individual-key-name>` | Get the value of an individual child of an object param. This is alpha feature, set `enable-api-fields` to `alpha`  to use it. |
 | `tasks.<taskName>.results.<resultName>` | The value of the `Task's` result. Can alter `Task` execution order within a `Pipeline`.) |
-| `tasks.<taskName>.results['<resultName>']` | (see above)) |
-| `tasks.<taskName>.results["<resultName>"]` | (see above)) |
+| `tasks.<taskName>.results.<resultName>[i]` | The ith value of the `Task's` array result. Can alter `Task` execution order within a `Pipeline`.) |
+| `tasks.<taskName>.results.<resultName>[*]` | The array value of the `Task's` result. Can alter `Task` execution order within a `Pipeline`. Cannot be used in `script`.) |
+| `tasks.<taskName>.results.<resultName>.key` | The `key` value of the `Task's` object result. Can alter `Task` execution order within a `Pipeline`.) |
 | `workspaces.<workspaceName>.bound` | Whether a `Workspace` has been bound or not. "false" if the `Workspace` declaration has `optional: true` and the Workspace binding was omitted by the PipelineRun. |
 | `context.pipelineRun.name` | The name of the `PipelineRun` that this `Pipeline` is running in. |
 | `context.pipelineRun.namespace` | The namespace of the `PipelineRun` that this `Pipeline` is running in. |
@@ -38,8 +48,13 @@ For instructions on using variable substitutions see the relevant section of [th
 | `params.<param name>` | The value of the parameter at runtime. |
 | `params['<param name>']` | (see above) |
 | `params["<param name>"]` | (see above) |
-| `resources.inputs.<resourceName>.path` | The path to the input resource's directory. |
-| `resources.outputs.<resourceName>.path` | The path to the output resource's directory. |
+| `params.<param name>[*]` | Get the whole param array or object.|
+| `params['<param name>'][*]` | (see above) |
+| `params["<param name>"][*]` | (see above) |
+| `params.<param name>[i]` | Get the i-th element of param array. This is alpha feature, set `enable-api-fields` to `alpha`  to use it.|
+| `params['<param name>'][i]` | (see above) |
+| `params["<param name>"][i]` | (see above) |
+| `params.<object-param-name>.<individual-key-name>` | Get the value of an individual child of an object param. This is alpha feature, set `enable-api-fields` to `alpha`  to use it. |
 | `results.<resultName>.path` | The path to the file where the `Task` writes its results data. |
 | `results['<resultName>'].path` | (see above) |
 | `results["<resultName>"].path` | (see above) |
@@ -56,84 +71,6 @@ For instructions on using variable substitutions see the relevant section of [th
 | `steps.step-<stepName>.exitCode.path` | The path to the file where a Step's exit code is stored. |
 | `steps.step-unnamed-<stepIndex>.exitCode.path` | The path to the file where a Step's exit code is stored for a step without any name. |
 
-### `PipelineResource` variables available in a `Task`
-
-> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
->
-> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
-> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
-
-Each supported type of `PipelineResource` specified within a `Task` exposes a unique set
-of variables. This section lists the variables exposed by each type. You can access a
-variable via `resources.inputs.<resourceName>.<variableName>` or
-`resources.outputs.<resourceName>.<variableName>`.
-
-#### Variables for the `Git` type
-
-| Variable | Description |
-| -------- | ----------- |
-| `name` | The name of the resource. |
-| `type` | Type value of `"git"`. |
-| `url` | The URL of the Git repository. |
-| `revision` | The revision to check out. |
-| `refspec` | The value of the resource's `refspec` parameter. |
-| `depth` | The integer value of the resource's `depth` parameter. |
-| `sslVerify` | The value of the resource's `sslVerify` parameter, either `"true"` or `"false"`. |
-| `httpProxy` | The value of the resource's `httpProxy` parameter. |
-| `httpsProxy` | The value of the resource's `httpsProxy` parameter. |
-| `noProxy` | The value of the resource's `noProxy` parameter. |
-
-#### Variables for the `PullRequest` type
-
-| Variable | Description |
-| -------- | ----------- |
-| `name` | The name of the resource. |
-| `type` | Type value of `"pullRequest"`.|
-| `url` | The URL of the pull request. |
-| `provider` | Provider value, either `"github"` or `"gitlab"`. |
-| `insecure-skip-tls-verify` | The value of the resource's `insecure-skip-tls-verify` parameter, either `"true"` or `"false"`. |
-
-#### Variables for the `Image` type
-
-| Variable | Description |
-| -------- | ----------- |
-| `name` | The name of the resource. |
-| `type` | Type value of `"image"`. |
-| `url` | The complete path to the image. |
-| `digest` | The digest of the image. |
-
-#### Variables for the `GCS` type
-
-| Variable | Description |
-| -------- | ----------- |
-| `name` | The name of the resource. |
-| `type` | Type value of `"gcs"`. |
-| `location` | The fully qualified address of the blob storage. |
-
-#### Variables for the `Cluster` type
-
-| Variable | Description |
-| -------- | ----------- |
-| `name` | The name of the resource. |
-| `type` | Type value of `"cluster"`. |
-| `url` | Host URL of the master node. |
-| `username` | The user with access to the cluster. |
-| `password` | The password for the user specified in `username`. |
-| `namespace` | The namespace to target in the cluster. |
-| `token` | The bearer token. |
-| `insecure` | Whether to verify the TLS connection to the server, either `"true"` or `"false"`. |
-| `cadata` | Stringified PEM-encoded bytes from the relevant root certificate bundle. |
-| `clientKeyData` | Stringified PEM-encoded bytes from the client key file for TLS. |
-| `clientCertificateData` | Stringified PEM-encoded bytes from the client certificate file for TLS. |
-
-#### Variables for the `CloudEvent` type
-
-| Variable | Description |
-| -------- | ----------- |
-| `name` | The name of the resource. |
-| `type` | Type value of `"cloudEvent"`. |
-| `target-uri` | The URI to hit with cloud event payloads. |
-
 ## Fields that accept variable substitutions
 
 | CRD | Field |
@@ -144,6 +81,7 @@ variable via `resources.inputs.<resourceName>.<variableName>` or
 | `Task` | `spec.steps[].command` |
 | `Task` | `spec.steps[].args` |
 | `Task` | `spec.steps[].script` |
+| `Task` | `spec.steps[].onError` |
 | `Task` | `spec.steps[].env.value` |
 | `Task` | `spec.steps[].env.valuefrom.secretkeyref.name` |
 | `Task` | `spec.steps[].env.valuefrom.secretkeyref.key` |

@@ -18,20 +18,20 @@ package test
 
 import (
 	"archive/tar"
+	"errors"
 	"io"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 
-	"github.com/tektoncd/pipeline/test/parse"
-
-	"github.com/ghodss/yaml"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	tkremote "github.com/tektoncd/pipeline/pkg/remote/oci"
+	"github.com/tektoncd/pipeline/test/parse"
+	"sigs.k8s.io/yaml"
 )
 
 func TestCreateImage(t *testing.T) {
@@ -40,7 +40,7 @@ func TestCreateImage(t *testing.T) {
 	defer s.Close()
 	u, _ := url.Parse(s.URL)
 
-	task := parse.MustParseTask(t, `
+	task := parse.MustParseV1Task(t, `
 metadata:
   name: test-create-image
 `)
@@ -77,7 +77,7 @@ metadata:
 	if diff := cmp.Diff(m.Layers[0].Annotations[tkremote.KindAnnotation], "task"); diff != "" {
 		t.Error(diff)
 	}
-	if diff := cmp.Diff(m.Layers[0].Annotations[tkremote.APIVersionAnnotation], "v1beta1"); diff != "" {
+	if diff := cmp.Diff(m.Layers[0].Annotations[tkremote.APIVersionAnnotation], "v1"); diff != "" {
 		t.Error(diff)
 	}
 
@@ -95,7 +95,7 @@ metadata:
 	}
 
 	actual := make([]byte, header.Size)
-	if _, err := reader.Read(actual); err != nil && err != io.EOF {
+	if _, err := reader.Read(actual); err != nil && !errors.Is(err, io.EOF) {
 		t.Errorf("failed to read contents of tar bundle: %v", err)
 	}
 

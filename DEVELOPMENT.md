@@ -17,7 +17,6 @@ First, you may want to [Ramp up](#ramp-up) on Kubernetes and Custom Resource Def
 1. [Developing and testing](#developing-and-testing) Tekton pipelines
     1. Learn how to [iterate](#iterating-on-code-changes) on code changes
     1. [Managing Tekton Objects using `ko`](#managing-tekton-objects-using-ko) in Kubernetes
-    1. [Standing up a K8s cluster with Tekton using the kind tool](#standing-up-a-k8s-cluster-with-tekton-using-the-kind-tool)
     1. [Accessing logs](#accessing-logs)
     1. [Adding new CRD types](#adding-new-crd-types)
 
@@ -25,23 +24,11 @@ First, you may want to [Ramp up](#ramp-up) on Kubernetes and Custom Resource Def
 
 ### Ramp up
 
-Welcome to the project! :clap::clap::clap:  You may find these resources helpful to "ramp up" on some of the technologies this project builds and runs on. This project extends Kubernetes (aka
-`k8s`) with Custom Resource Definitions (CRDs). To find out more, read:
+Welcome to the project! :clap::clap::clap:  You may find these resources helpful to "ramp up" on some of the technologies this project builds and runs on.
+This project extends Kubernetes (aka `k8s`) with Custom Resource Definitions (CRDs).
+To learn about how this works, check out our [developer documentation](docs/developers/controller-logic.md).
 
--   [The Kubernetes docs on Custom Resources](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/) -
-    These will orient you on what words like "Resource" and "Controller"
-    concretely mean
--   [Understanding Kubernetes objects](https://kubernetes.io/docs/concepts/overview/working-with-objects/kubernetes-objects/) -
-    This will further solidify k8s nomenclature
--   [API conventions - Types(kinds)](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#types-kinds) -
-    Another useful set of words describing words. "Objects" and "Lists" in k8s
-    land
--   [Extend the Kubernetes API with CustomResourceDefinitions](https://kubernetes.io/docs/tasks/access-kubernetes-api/custom-resources/custom-resource-definitions/)-
-    A tutorial demonstrating how a Custom Resource Definition can be added to
-    Kubernetes without anything actually "happening" beyond being able to list
-    Objects of that kind
-
-At this point, you may find it useful to return to these `Tekton Pipeline` docs:
+After reading the developer docs, you may find it useful to return to these `Tekton Pipeline` docs:
 
 -   [Tekton Pipeline README](https://github.com/tektoncd/pipeline/blob/main/docs/README.md) -
     Some of the terms here may make more sense!
@@ -49,7 +36,7 @@ At this point, you may find it useful to return to these `Tekton Pipeline` docs:
     [official installation docs](https://github.com/tektoncd/pipeline/blob/main/docs/install.md)
     or continue through [getting started for development](#getting-started)
 -   [Tekton Pipeline "Hello World" tutorial](https://github.com/tektoncd/pipeline/blob/main/docs/tutorial.md) -
-    Define `Tasks`, `Pipelines`, and `PipelineResources` (i.e., Tekton CRDs), and see what happens when they are run
+    Define `Tasks` and `Pipelines` (i.e., Tekton CRDs), and see what happens when they are run
 
 ---
 
@@ -96,6 +83,17 @@ You must install these tools:
 1. [`bash`](https://www.gnu.org/software/bash/) v4 or higher: For scripts used to
    generate code and update dependencies. On MacOS the default bash is too old,
    you can use [Homebrew](https://brew.sh) to install a later version.
+
+1. [`go-licenses`](https://github.com/google/go-licenses) is used in e2e tests.
+
+1. (Optional)
+   [`golangci-lint`](https://golangci-lint.run/usage/install/#local-installation)
+   is run against every PR. You may want to install and [run this tool
+   locally](https://golangci-lint.run/usage/quick-start) to iterate quickly on
+   linter issues.
+
+   > **Note** Linter findings are dependent on your installed Go version. Match
+   the version in [`go.mod`](go.mod) to match the findings in your PR.
 
 ### Configure environment
 
@@ -196,7 +194,20 @@ for your `KO_DOCKER_REPO` if required. To be able to push images to
 ```shell
 gcloud auth configure-docker
 ```
-The [example GKE setup](#using-gke) in this guide grants service accounts permissions to push and pull GCR images in the same project.
+
+To be able to pull images from `gcr.io/<project>`, please follow the instructions [here](https://cloud.google.com/container-registry/docs/access-control#grant) to configure IAM policies for the services that will pull iamges from your GCR. 
+
+If you choose to run GKE and GCR in the same GCP project, please follow the [example GKE setup](#using-gke) and make sure to add ```storage-full``` to the ```--scopes``` args in the example to give the GKE default service account full access to your GCR. Alternatively, you can grant the GKE default service account read access to your GCR by running:
+
+```
+gcloud projects add-iam-policy-binding <project-number> \
+--member='serviceAccount:<project-number>-compute@developer.gserviceaccount.com' \
+--role='roles/storage.objectViewer'
+```
+
+For more information about GCP Compute Engine default service accounts, please check [here](https://cloud.google.com/compute/docs/access/service-accounts)
+
+After configuring IAM policy of your GCR, the [example GKE setup](#using-gke) in this guide now has permissions to push and pull images from your GCR.
 If you choose to use a different setup with fewer default permissions, or your GKE cluster that will run Tekton
 is in a different project than your GCR registry, you will need to provide the Tekton pipelines
 controller and webhook service accounts with GCR credentials.
@@ -255,7 +266,7 @@ as follows.
 
 The recommended minimum development configuration is:
 
-- Kubernetes version 1.20 or later
+- Kubernetes version 1.24 or later
 - 4 (virtual) CPU nodes
   - 8 GB of (actual or virtualized) platform memory
 - Node autoscaling, up to 3 nodes
@@ -267,13 +278,13 @@ The recommended minimum development configuration is:
 1. Install [required tools](./DEVELOPMENT.md#install-tools) (note: may require a newer version of Go).
 2. Install [Docker](https://www.docker.com/get-started).
 3. Create cluster:
-   
+
    ```sh
    $ kind create cluster
    ```
 
 4. Configure [ko](https://kind.sigs.k8s.io/):
-   
+
    ```sh
    $ export KO_DOCKER_REPO="kind.local"
    $ export KIND_CLUSTER_NAME="kind"  # only needed if you used a custom name in the previous step
@@ -291,7 +302,7 @@ optional: As a convenience, the [Tekton plumbing project](https://github.com/tek
 
 #### Using GKE
 
-1. [Set up a GCP Project](https://cloud.google.com/resource-manager/docs/creating-managing-projects) and [enable the GKE API](https://cloud.google.com/kubernetes-engine/docs/quickstart#before-you-begin). 
+1. [Set up a GCP Project](https://cloud.google.com/resource-manager/docs/creating-managing-projects) and [enable the GKE API](https://cloud.google.com/kubernetes-engine/docs/quickstart#before-you-begin).
     You may find it useful to save the ID of the project in an environment
     variable (e.g. `PROJECT_ID`).
 
@@ -311,13 +322,12 @@ optional: As a convenience, the [Tekton plumbing project](https://github.com/tek
      --no-issue-client-certificate \
      --project=$PROJECT_ID \
      --region=us-central1 \
-     --machine-type=n1-standard-4 \
-     --image-type=cos \
+     --machine-type=e2-standard-4 \
      --num-nodes=1 \
-     --cluster-version=1.20
+     --cluster-version=1.24
     ```
 
-    > **Note**: The recommended [GCE machine type](https://cloud.google.com/compute/docs/machine-types) is `'n1-standard-4'`.
+    > **Note**: The recommended [GCE machine type](https://cloud.google.com/compute/docs/machine-types) is `'e2-standard-4'`.
 
     > **Note**: [The `'--scopes'` argument](https://cloud.google.com/sdk/gcloud/reference/container/clusters/create#--scopes) on the  `'gcloud container cluster create'` command controls what GCP resources the cluster's default service account has access to; for example, to give the default service account full access to your GCR registry, you can add `'storage-full'` to the `--scopes` arg. See [Authenticating to GCP](https://cloud.google.com/kubernetes-engine/docs/tutorials/authenticating-to-cloud-platform) for more details.
 
@@ -364,7 +374,7 @@ The `ko` command is the preferred method to manage (i.e., create, modify or dele
 You can stand up a version of Tekton using your local clone's code to the currently configured K8s context (i.e.,  `kubectl config current-context`):
 
 ```shell
-ko apply -f config/
+ko apply -R -f config/
 ```
 
 #### Verify installation
@@ -380,8 +390,14 @@ kubectl get pods -n tekton-pipelines
 You can clean up everything with:
 
 ```shell
+# If you should not delete the namespace of a pipeline component
 ko delete -f config/
+
+# If you also can delete the namespace of a pipeline component
+ko delete -R -f config/
 ```
+
+**Note:** If you use a pipeline component in the same namespace as other components such as dashboard or triggers, executing `ko delete -R -f config/` deletes these other components too.
 
 #### Redeploy controller
 
@@ -404,9 +420,9 @@ set -e
 # Set your target namespace here
 TARGET_NAMESPACE=new-target-namespace
 
-ko resolve -f config | sed -e '/kind: Namespace/!b;n;n;s/:.*/: '"${TARGET_NAMESPACE}"'/' | \
+ko resolve -R -f config | sed -e '/kind: Namespace/!b;n;n;s/:.*/: '"${TARGET_NAMESPACE}"'/' | \
     sed "s/namespace: tekton-pipelines$/namespace: ${TARGET_NAMESPACE}/" | \
-    kubectl apply -f-
+    kubectl apply -R -f-
 kubectl set env deployments --all SYSTEM_NAMESPACE=${TARGET_NAMESPACE} -n ${TARGET_NAMESPACE}
 ```
 
@@ -449,10 +465,10 @@ If you need to add a new CRD type, you will need to add:
     - [clusterrole-aggregate-view.yaml](./config/clusterrole-aggregate-view.yaml)
 1. Add go structs for the types in
     [pkg/apis/pipeline/v1alpha1](./pkg/apis/pipeline/v1alpha1) e.g
-    [condition_types.go](./pkg/apis/pipeline/v1alpha1/condition_types.go) This
+    [verificationpolicy_types.go](./pkg/apis/pipeline/v1alpha1/verificationpolicy_types.go) This
     should implement the
-    [Defaultable](./pkg/apis/pipeline/v1alpha1/condition_defaults.go) and
-    [Validatable](./pkg/apis/pipeline/v1alpha1/condition_validation.go)
+    [Defaultable](./pkg/apis/pipeline/v1alpha1/verificationpolicy_defaults.go) and
+    [Validatable](./pkg/apis/pipeline/v1alpha1/verificationpolicy_validation.go)
     interfaces as they are needed for the webhook in the next step.
 1. Register it with the [webhook](./cmd/webhook/main.go)
 1. Add the new type to the

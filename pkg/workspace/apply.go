@@ -20,9 +20,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/tektoncd/pipeline/pkg/apis/config"
-	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
+	v1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
 	"github.com/tektoncd/pipeline/pkg/names"
+	"github.com/tektoncd/pipeline/pkg/substitution"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
@@ -46,7 +46,7 @@ func (nvm nameVolumeMap) setVolumeSource(workspaceName string, volumeName string
 // wb and the value is a newly-created Volume to use. If the same Volume is bound twice, the
 // resulting volumes will both have the same name to prevent the same Volume from being attached
 // to a pod twice. The names of the returned volumes will be a short random string starting "ws-".
-func CreateVolumes(wb []v1beta1.WorkspaceBinding) map[string]corev1.Volume {
+func CreateVolumes(wb []v1.WorkspaceBinding) map[string]corev1.Volume {
 	pvcs := map[string]corev1.Volume{}
 	v := make(nameVolumeMap)
 	for _, w := range wb {
@@ -70,12 +70,18 @@ func CreateVolumes(wb []v1beta1.WorkspaceBinding) map[string]corev1.Volume {
 		case w.Secret != nil:
 			s := *w.Secret
 			v.setVolumeSource(w.Name, name, corev1.VolumeSource{Secret: &s})
+		case w.Projected != nil:
+			s := *w.Projected
+			v.setVolumeSource(w.Name, name, corev1.VolumeSource{Projected: &s})
+		case w.CSI != nil:
+			csi := *w.CSI
+			v.setVolumeSource(w.Name, name, corev1.VolumeSource{CSI: &csi})
 		}
 	}
 	return v
 }
 
-func getDeclaredWorkspace(name string, w []v1beta1.WorkspaceDeclaration) (*v1beta1.WorkspaceDeclaration, error) {
+func getDeclaredWorkspace(name string, w []v1.WorkspaceDeclaration) (*v1.WorkspaceDeclaration, error) {
 	for _, workspace := range w {
 		if workspace.Name == name {
 			return &workspace, nil
@@ -88,7 +94,7 @@ func getDeclaredWorkspace(name string, w []v1beta1.WorkspaceDeclaration) (*v1bet
 // Apply will update the StepTemplate, Sidecars and Volumes declaration in ts so that the workspaces
 // specified through wb combined with the declared workspaces in ts will be available for
 // all Step and Sidecar containers in the resulting pod.
-func Apply(ctx context.Context, ts v1beta1.TaskSpec, wb []v1beta1.WorkspaceBinding, v map[string]corev1.Volume) (*v1beta1.TaskSpec, error) {
+func Apply(ctx context.Context, ts v1.TaskSpec, wb []v1.WorkspaceBinding, v map[string]corev1.Volume) (*v1.TaskSpec, error) {
 	// If there are no bound workspaces, we don't need to do anything
 	if len(wb) == 0 {
 		return &ts, nil
@@ -98,27 +104,34 @@ func Apply(ctx context.Context, ts v1beta1.TaskSpec, wb []v1beta1.WorkspaceBindi
 
 	// Initialize StepTemplate if it hasn't been already
 	if ts.StepTemplate == nil {
-		ts.StepTemplate = &corev1.Container{}
+		ts.StepTemplate = &v1.StepTemplate{}
 	}
 
 	isolatedWorkspaces := sets.NewString()
 
-	alphaAPIEnabled := config.FromContextOrDefaults(ctx).FeatureFlags.EnableAPIFields == config.AlphaAPIFields
-
-	if alphaAPIEnabled {
-		for _, step := range ts.Steps {
-			for _, workspaceUsage := range step.Workspaces {
-				isolatedWorkspaces.Insert(workspaceUsage.Name)
-			}
+	for _, step := range ts.Steps {
+		for _, workspaceUsage := range step.Workspaces {
+			isolatedWorkspaces.Insert(workspaceUsage.Name)
 		}
-		for _, sidecar := range ts.Sidecars {
-			for _, workspaceUsage := range sidecar.Workspaces {
-				isolatedWorkspaces.Insert(workspaceUsage.Name)
-			}
+	}
+	for _, sidecar := range ts.Sidecars {
+		for _, workspaceUsage := range sidecar.Workspaces {
+			isolatedWorkspaces.Insert(workspaceUsage.Name)
 		}
 	}
 
 	for i := range wb {
+		// Propagate missing Workspaces
+		addWorkspace := true
+		for _, ws := range ts.Workspaces {
+			if ws.Name == wb[i].Name {
+				addWorkspace = false
+				break
+			}
+		}
+		if addWorkspace {
+			ts.Workspaces = append(ts.Workspaces, v1.WorkspaceDeclaration{Name: wb[i].Name})
+		}
 		w, err := getDeclaredWorkspace(wb[i].Name, ts.Workspaces)
 		if err != nil {
 			return nil, err
@@ -133,15 +146,10 @@ func Apply(ctx context.Context, ts v1beta1.TaskSpec, wb []v1beta1.WorkspaceBindi
 			ReadOnly:  w.ReadOnly,
 		}
 
-		if alphaAPIEnabled {
-			if isolatedWorkspaces.Has(w.Name) {
-				mountAsIsolatedWorkspace(ts, w.Name, volumeMount)
-			} else {
-				mountAsSharedWorkspace(ts, volumeMount)
-			}
+		if isolatedWorkspaces.Has(w.Name) {
+			mountAsIsolatedWorkspace(ts, w.Name, volumeMount)
 		} else {
-			// Prior to the alpha feature gate only Steps may receive workspaces.
-			ts.StepTemplate.VolumeMounts = append(ts.StepTemplate.VolumeMounts, volumeMount)
+			mountAsSharedWorkspace(ts, volumeMount)
 		}
 
 		// Only add this volume if it hasn't already been added
@@ -155,7 +163,7 @@ func Apply(ctx context.Context, ts v1beta1.TaskSpec, wb []v1beta1.WorkspaceBindi
 
 // mountAsSharedWorkspace takes a volumeMount and adds it to all the steps and sidecars in
 // a TaskSpec.
-func mountAsSharedWorkspace(ts v1beta1.TaskSpec, volumeMount corev1.VolumeMount) {
+func mountAsSharedWorkspace(ts v1.TaskSpec, volumeMount corev1.VolumeMount) {
 	ts.StepTemplate.VolumeMounts = append(ts.StepTemplate.VolumeMounts, volumeMount)
 
 	for i := range ts.Sidecars {
@@ -165,7 +173,7 @@ func mountAsSharedWorkspace(ts v1beta1.TaskSpec, volumeMount corev1.VolumeMount)
 
 // mountAsIsolatedWorkspace takes a volumeMount and adds it only to the steps and sidecars
 // that have requested access to it.
-func mountAsIsolatedWorkspace(ts v1beta1.TaskSpec, workspaceName string, volumeMount corev1.VolumeMount) {
+func mountAsIsolatedWorkspace(ts v1.TaskSpec, workspaceName string, volumeMount corev1.VolumeMount) {
 	for i := range ts.Steps {
 		step := &ts.Steps[i]
 		for _, workspaceUsage := range step.Workspaces {
@@ -196,11 +204,74 @@ func mountAsIsolatedWorkspace(ts v1beta1.TaskSpec, workspaceName string, volumeM
 
 // AddSidecarVolumeMount is a helper to add a volumeMount to the sidecar unless its
 // MountPath would conflict with another of the sidecar's existing volume mounts.
-func AddSidecarVolumeMount(sidecar *v1beta1.Sidecar, volumeMount corev1.VolumeMount) {
+func AddSidecarVolumeMount(sidecar *v1.Sidecar, volumeMount corev1.VolumeMount) {
 	for j := range sidecar.VolumeMounts {
 		if sidecar.VolumeMounts[j].MountPath == volumeMount.MountPath {
 			return
 		}
 	}
 	sidecar.VolumeMounts = append(sidecar.VolumeMounts, volumeMount)
+}
+
+func findWorkspaceSubstitutionLocationsInSidecars(sidecars []v1.Sidecar) sets.String {
+	locationsToCheck := sets.NewString()
+	for _, sidecar := range sidecars {
+		locationsToCheck.Insert(sidecar.Script)
+
+		for i := range sidecar.Args {
+			locationsToCheck.Insert(sidecar.Args[i])
+		}
+
+		for i := range sidecar.Command {
+			locationsToCheck.Insert(sidecar.Command[i])
+		}
+	}
+	return locationsToCheck
+}
+
+func findWorkspaceSubstitutionLocationsInSteps(steps []v1.Step) sets.String {
+	locationsToCheck := sets.NewString()
+	for _, step := range steps {
+		locationsToCheck.Insert(step.Script)
+
+		for i := range step.Args {
+			locationsToCheck.Insert(step.Args[i])
+		}
+
+		for i := range step.Command {
+			locationsToCheck.Insert(step.Command[i])
+		}
+	}
+	return locationsToCheck
+}
+
+func findWorkspaceSubstitutionLocationsInStepTemplate(stepTemplate *v1.StepTemplate) sets.String {
+	locationsToCheck := sets.NewString()
+
+	if stepTemplate != nil {
+		for i := range stepTemplate.Args {
+			locationsToCheck.Insert(stepTemplate.Args[i])
+		}
+		for i := range stepTemplate.Command {
+			locationsToCheck.Insert(stepTemplate.Command[i])
+		}
+	}
+	return locationsToCheck
+}
+
+// FindWorkspacesUsedByTask returns a set of all the workspaces that the TaskSpec uses.
+func FindWorkspacesUsedByTask(ts v1.TaskSpec) (sets.String, error) {
+	locationsToCheck := sets.NewString()
+	locationsToCheck.Insert(findWorkspaceSubstitutionLocationsInSteps(ts.Steps).List()...)
+	locationsToCheck.Insert(findWorkspaceSubstitutionLocationsInSidecars(ts.Sidecars).List()...)
+	locationsToCheck.Insert(findWorkspaceSubstitutionLocationsInStepTemplate(ts.StepTemplate).List()...)
+	workspacesUsedInSteps := sets.NewString()
+	for item := range locationsToCheck {
+		workspacesUsed, _, errString := substitution.ExtractVariablesFromString(item, "workspaces")
+		if errString != "" {
+			return workspacesUsedInSteps, fmt.Errorf("Error while extracting workspace: %s", errString)
+		}
+		workspacesUsedInSteps.Insert(workspacesUsed...)
+	}
+	return workspacesUsedInSteps, nil
 }

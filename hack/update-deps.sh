@@ -22,12 +22,12 @@ source $(git rev-parse --show-toplevel)/vendor/github.com/tektoncd/plumbing/scri
 
 cd ${REPO_ROOT_DIR}
 
-VERSION="release-0.23"
+KNATIVE_VERSION="release-1.9"
 
 # The list of dependencies that we track at HEAD and periodically
 # float forward in this repository.
 FLOATING_DEPS=(
-  "knative.dev/pkg@${VERSION}"
+  "knative.dev/pkg@${KNATIVE_VERSION}"
 )
 
 # Parse flags to determine any we should pass to dep.
@@ -58,5 +58,3 @@ if [[ -d hack/patches ]];then
         git apply ${f}
     done
 fi
-
-update_licenses third_party/

@@ -26,15 +26,13 @@ import (
 	"testing"
 
 	"github.com/tektoncd/pipeline/test/parse"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	knativetest "knative.dev/pkg/test"
+	"knative.dev/pkg/test/helpers"
 )
 
 const (
-	sidecarTaskName      = "sidecar-test-task"
-	sidecarTaskRunName   = "sidecar-test-task-run"
 	sidecarContainerName = "sidecar-container"
 	primaryContainerName = "primary"
 )
@@ -62,8 +60,7 @@ func TestSidecarTaskSupport(t *testing.T) {
 	ctx := context.Background()
 	t.Parallel()
 
-	for i, test := range tests {
-		i := i
+	for _, test := range tests {
 		test := test
 		t.Run(test.desc, func(t *testing.T) {
 			t.Parallel()
@@ -74,9 +71,9 @@ func TestSidecarTaskSupport(t *testing.T) {
 			knativetest.CleanupOnInterrupt(func() { tearDown(ctx, t, clients, namespace) }, t.Logf)
 			defer tearDown(ctx, t, clients, namespace)
 
-			sidecarTaskName := fmt.Sprintf("%s-%d", sidecarTaskName, i)
-			sidecarTaskRunName := fmt.Sprintf("%s-%d", sidecarTaskRunName, i)
-			task := parse.MustParseTask(t, fmt.Sprintf(`
+			sidecarTaskName := helpers.ObjectNameForTest(t)
+			sidecarTaskRunName := helpers.ObjectNameForTest(t)
+			task := parse.MustParseV1Task(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
@@ -91,31 +88,31 @@ spec:
     command: [%s]
 `, sidecarTaskName, namespace, primaryContainerName, stringSliceToYAMLArray(test.stepCommand), sidecarContainerName, stringSliceToYAMLArray(test.sidecarCommand)))
 
-			taskRun := parse.MustParseTaskRun(t, fmt.Sprintf(`
+			taskRun := parse.MustParseV1TaskRun(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
 spec:
   taskRef:
     name: %s
-  timeout: 1m
+  timeout: 2m
 `, sidecarTaskRunName, namespace, sidecarTaskName))
 
 			t.Logf("Creating Task %q", sidecarTaskName)
-			if _, err := clients.TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
+			if _, err := clients.V1TaskClient.Create(ctx, task, metav1.CreateOptions{}); err != nil {
 				t.Fatalf("Failed to create Task %q: %v", sidecarTaskName, err)
 			}
 
 			t.Logf("Creating TaskRun %q", sidecarTaskRunName)
-			if _, err := clients.TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
+			if _, err := clients.V1TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
 				t.Fatalf("Failed to create TaskRun %q: %v", sidecarTaskRunName, err)
 			}
 
-			if err := WaitForTaskRunState(ctx, clients, sidecarTaskRunName, Succeed(sidecarTaskRunName), "TaskRunSucceed"); err != nil {
+			if err := WaitForTaskRunState(ctx, clients, sidecarTaskRunName, Succeed(sidecarTaskRunName), "TaskRunSucceed", v1Version); err != nil {
 				t.Fatalf("Error waiting for TaskRun %q to finish: %v", sidecarTaskRunName, err)
 			}
 
-			tr, err := clients.TaskRunClient.Get(ctx, sidecarTaskRunName, metav1.GetOptions{})
+			tr, err := clients.V1TaskRunClient.Get(ctx, sidecarTaskRunName, metav1.GetOptions{})
 			if err != nil {
 				t.Fatalf("Error getting Taskrun: %v", err)
 			}
@@ -162,7 +159,7 @@ spec:
 				t.Errorf("Either the primary or sidecar containers did not terminate")
 			}
 
-			trCheckSidecarStatus, err := clients.TaskRunClient.Get(ctx, sidecarTaskRunName, metav1.GetOptions{})
+			trCheckSidecarStatus, err := clients.V1TaskRunClient.Get(ctx, sidecarTaskRunName, metav1.GetOptions{})
 			if err != nil {
 				t.Fatalf("Error getting TaskRun: %v", err)
 			}
@@ -170,7 +167,7 @@ spec:
 			sidecarFromStatus := trCheckSidecarStatus.Status.Sidecars[0]
 
 			// Check if Sidecar ContainerName is present for SidecarStatus
-			if sidecarFromStatus.ContainerName != fmt.Sprintf("sidecar-%s", sidecarContainerName) {
+			if sidecarFromStatus.Container != fmt.Sprintf("sidecar-%s", sidecarContainerName) {
 				t.Errorf("Sidecar ContainerName should be: %s", sidecarContainerName)
 			}
 

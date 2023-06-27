@@ -24,13 +24,14 @@ import (
 	"time"
 
 	"github.com/tektoncd/pipeline/pkg/apis/config"
-	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
-	listers "github.com/tektoncd/pipeline/pkg/client/listers/pipeline/v1beta1"
+	v1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
+	listers "github.com/tektoncd/pipeline/pkg/client/listers/pipeline/v1"
 	"go.opencensus.io/stats"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/tag"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/labels"
 	"knative.dev/pkg/apis"
 	"knative.dev/pkg/logging"
@@ -63,8 +64,6 @@ var (
 const (
 	// ReasonCancelled indicates that a PipelineRun was cancelled.
 	ReasonCancelled = "Cancelled"
-	// ReasonCancelledDeprecated Deprecated: "PipelineRunCancelled" indicates that a PipelineRun was cancelled.
-	ReasonCancelledDeprecated = "PipelineRunCancelled"
 )
 
 // Recorder holds keys for Tekton metrics
@@ -82,9 +81,9 @@ type Recorder struct {
 // initializes this singleton and returns the same recorder across any
 // subsequent invocations.
 var (
-	once        sync.Once
-	r           *Recorder
-	recorderErr error
+	once           sync.Once
+	r              *Recorder
+	errRegistering error
 )
 
 // NewRecorder creates a new metrics recorder instance
@@ -99,21 +98,21 @@ func NewRecorder(ctx context.Context) (*Recorder, error) {
 		}
 
 		cfg := config.FromContextOrDefaults(ctx)
-		recorderErr = viewRegister(cfg.Metrics)
-		if recorderErr != nil {
+		errRegistering = viewRegister(cfg.Metrics)
+		if errRegistering != nil {
 			r.initialized = false
 			return
 		}
 	})
 
-	return r, recorderErr
+	return r, errRegistering
 }
 
 func viewRegister(cfg *config.Metrics) error {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
-	prunTag := []tag.Key{}
+	var prunTag []tag.Key
 
 	switch cfg.PipelinerunLevel {
 	case config.PipelinerunLevelAtPipelinerun:
@@ -209,13 +208,19 @@ func nilInsertTag(task, taskrun string) []tag.Mutator {
 // DurationAndCount logs the duration of PipelineRun execution and
 // count for number of PipelineRuns succeed or failed
 // returns an error if its failed to log the metrics
-func (r *Recorder) DurationAndCount(pr *v1beta1.PipelineRun) error {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
+func (r *Recorder) DurationAndCount(pr *v1.PipelineRun, beforeCondition *apis.Condition) error {
 	if !r.initialized {
 		return fmt.Errorf("ignoring the metrics recording for %s , failed to initialize the metrics recorder", pr.Name)
 	}
+
+	afterCondition := pr.Status.GetCondition(apis.ConditionSucceeded)
+	// To avoid recount
+	if equality.Semantic.DeepEqual(beforeCondition, afterCondition) {
+		return nil
+	}
+
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
 
 	duration := time.Duration(0)
 	if pr.Status.StartTime != nil {
@@ -228,7 +233,7 @@ func (r *Recorder) DurationAndCount(pr *v1beta1.PipelineRun) error {
 	status := "success"
 	if cond := pr.Status.GetCondition(apis.ConditionSucceeded); cond.Status == corev1.ConditionFalse {
 		status = "failed"
-		if cond.Reason == ReasonCancelled || cond.Reason == ReasonCancelledDeprecated {
+		if cond.Reason == ReasonCancelled {
 			status = "cancelled"
 		}
 	}
@@ -245,7 +250,7 @@ func (r *Recorder) DurationAndCount(pr *v1beta1.PipelineRun) error {
 		return err
 	}
 
-	metrics.Record(ctx, prDuration.M(float64(duration/time.Second)))
+	metrics.Record(ctx, prDuration.M(duration.Seconds()))
 	metrics.Record(ctx, prCount.M(1))
 
 	return nil
@@ -255,7 +260,7 @@ func (r *Recorder) DurationAndCount(pr *v1beta1.PipelineRun) error {
 // returns an error if its failed to log the metrics
 func (r *Recorder) RunningPipelineRuns(lister listers.PipelineRunLister) error {
 	r.mutex.Lock()
-	r.mutex.Unlock()
+	defer r.mutex.Unlock()
 
 	if !r.initialized {
 		return errors.New("ignoring the metrics recording, failed to initialize the metrics recorder")
@@ -263,7 +268,7 @@ func (r *Recorder) RunningPipelineRuns(lister listers.PipelineRunLister) error {
 
 	prs, err := lister.List(labels.Everything())
 	if err != nil {
-		return fmt.Errorf("failed to list pipelineruns while generating metrics : %v", err)
+		return fmt.Errorf("failed to list pipelineruns while generating metrics : %w", err)
 	}
 
 	var runningPRs int
@@ -288,12 +293,16 @@ func (r *Recorder) ReportRunningPipelineRuns(ctx context.Context, lister listers
 	logger := logging.FromContext(ctx)
 
 	for {
+		delay := time.NewTimer(r.ReportingPeriod)
 		select {
 		case <-ctx.Done():
 			// When the context is cancelled, stop reporting.
+			if !delay.Stop() {
+				<-delay.C
+			}
 			return
 
-		case <-time.After(r.ReportingPeriod):
+		case <-delay.C:
 			// Every 30s surface a metric for the number of running pipelines.
 			if err := r.RunningPipelineRuns(lister); err != nil {
 				logger.Warnf("Failed to log the metrics : %v", err)

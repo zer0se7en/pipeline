@@ -1,18 +1,19 @@
 <!--
 ---
 linkTitle: "Pod templates"
-weight: 1400
+weight: 409
 ---
 -->
+
 # Pod templates
 
-A Pod template defines a portion of a [`PodSpec`](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.20/#pod-v1-core)
+A Pod template defines a portion of a [`PodSpec`](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.18/#pod-v1-core)
 configuration that Tekton can use as "boilerplate" for a Pod that runs your `Tasks` and `Pipelines`.
 
 You can specify a Pod template for `TaskRuns` and `PipelineRuns`. In the template, you can specify custom values for fields governing
 the execution of individual `Tasks` or for all `Tasks` executed by a given `PipelineRun`.
 
-You also have the option to define a global Pod template [in your Tekton config](./install.md#customizing-basic-execution-parameters).
+You also have the option to define a global Pod template [in your Tekton config](./install.md#customizing-basic-execution-parameters) using the key `default-pod-template`.
 However, this global template is going to be merged with any templates
 you specify in your `TaskRuns` and `PipelineRuns`. Any field that is
 present in both the global template and the `TaskRun`'s or
@@ -21,6 +22,20 @@ present in both the global template and the `TaskRun`'s or
 See the following for examples of specifying a Pod template:
 - [Specifying a Pod template for a `TaskRun`](./taskruns.md#specifying-a-pod-template)
 - [Specifying a Pod template for a `PipelineRun`](./pipelineruns.md#specifying-a-pod-template)
+
+## Affinity Assistant Pod templates
+
+The Pod templates specified in the `TaskRuns` and `PipelineRuns `also apply to
+the [affinity assistant Pods](#./workspaces.md#specifying-workspace-order-in-a-pipeline-and-affinity-assistants)
+that are created when using Workspaces, but only on select fields.
+
+The supported fields are: `tolerations`, `nodeSelector`, and
+`imagePullSecrets` (see the table below for more details).
+
+Similarily to Pod templates, you have the option to define a global affinity
+assistant Pod template [in your Tekton config](./install.md#customizing-basic-execution-parameters)
+using the key `default-affinity-assistant-pod-template`. The merge strategy is
+the same as the one described above.
 
 ## Supported fields
 
@@ -32,6 +47,10 @@ Pod templates support fields listed in the table below.
 		<th>Description</th>
 	</thead>
 	<tbody>
+		<tr>
+			<td><code>env</code></td>
+			<td>Environment variables defined in the Pod template at <code>TaskRun</code> and <code>PipelineRun</code> level take precedence over the ones defined in <code>steps</code> and <code>stepTemplate</code></td>
+		</tr>
 		<tr>
 			<td><code>nodeSelector</code></td>
 			<td>Must be true for <a href=https://kubernetes.io/docs/concepts/configuration/assign-pod-node/>the Pod to fit on a node</a>.</td>
@@ -92,6 +111,14 @@ Pod templates support fields listed in the table below.
 			<td><code>hostNetwork</code></td>
 			<td><b>Default:</b> <code>false</code>. Determines whether to use the host network namespace.</td>
 		</tr>
+		<tr>
+			<td><code>hostAliases</code></td>
+			<td>Adds entries to a Pod's `/etc/hosts` to provide Pod-level overrides of hostnames. For further info see [Kubernetes' docs for this field](https://kubernetes.io/docs/tasks/network/customize-hosts-file-for-pods/).</td>
+		</tr>
+        <tr>
+            <td><code>topologySpreadConstraints</code></td>
+            <td>Specify how Pods are spread across your cluster among topology domains.</td>
+        </tr>
 	</tbody>
 </table>
 

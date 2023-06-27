@@ -1,23 +1,30 @@
 <!--
 ---
 linkTitle: "Pipelines"
-weight: 400
+weight: 203
 ---
 -->
+
 # Pipelines
 
-- [Overview](#pipelines)
-- [Configuring a `Pipeline`](#configuring-a-pipeline)
-  - [Specifying `Resources`](#specifying-resources)
+- [Pipelines](#pipelines)
+  - [Overview](#overview)
+  - [Configuring a `Pipeline`](#configuring-a-pipeline)
   - [Specifying `Workspaces`](#specifying-workspaces)
   - [Specifying `Parameters`](#specifying-parameters)
   - [Adding `Tasks` to the `Pipeline`](#adding-tasks-to-the-pipeline)
+    - [Specifying Remote Tasks](#specifying-remote-tasks)
+    - [Specifying `Parameters` in `PipelineTasks`](#specifying-parameters-in-pipelinetasks)
+    - [Specifying `Matrix` in `PipelineTasks`](#specifying-matrix-in-pipelinetasks)
+    - [Specifying `Workspaces` in `PipelineTasks`](#specifying-workspaces-in-pipelinetasks)
     - [Tekton Bundles](#tekton-bundles)
-    - [Using the `from` parameter](#using-the-from-parameter)
-    - [Using the `runAfter` parameter](#using-the-runafter-parameter)
-    - [Using the `retries` parameter](#using-the-retries-parameter)
+    - [Using the `runAfter` field](#using-the-runafter-field)
+    - [Using the `retries` field](#using-the-retries-field)
     - [Guard `Task` execution using `when` expressions](#guard-task-execution-using-when-expressions)
-    - [Guard `Task` execution using `Conditions`](#guard-task-execution-using-conditions)
+      - [Guarding a `Task` and its dependent `Tasks`](#guarding-a-task-and-its-dependent-tasks)
+        - [Cascade `when` expressions to the specific dependent `Tasks`](#cascade-when-expressions-to-the-specific-dependent-tasks)
+        - [Compose using Pipelines in Pipelines](#compose-using-pipelines-in-pipelines)
+      - [Guarding a `Task` only](#guarding-a-task-only)
     - [Configuring the failure timeout](#configuring-the-failure-timeout)
   - [Using variable substitution](#using-variable-substitution)
     - [Using the `retries` and `retry-count` variable substitutions](#using-the-retries-and-retry-count-variable-substitutions)
@@ -29,26 +36,29 @@ weight: 400
   - [Adding `Finally` to the `Pipeline`](#adding-finally-to-the-pipeline)
     - [Specifying `Workspaces` in `finally` tasks](#specifying-workspaces-in-finally-tasks)
     - [Specifying `Parameters` in `finally` tasks](#specifying-parameters-in-finally-tasks)
+    - [Specifying `matrix` in `finally` tasks](#specifying-matrix-in-finally-tasks)
     - [Consuming `Task` execution results in `finally`](#consuming-task-execution-results-in-finally)
+    - [Consuming `Pipeline` result with `finally`](#consuming-pipeline-result-with-finally)
     - [`PipelineRun` Status with `finally`](#pipelinerun-status-with-finally)
     - [Using Execution `Status` of `pipelineTask`](#using-execution-status-of-pipelinetask)
     - [Using Aggregate Execution `Status` of All `Tasks`](#using-aggregate-execution-status-of-all-tasks)
-    - [Guard `finally` `task` execution using `when` expressions](#guard-finally-task-execution-using-when-expressions)
-      - [`when` expressions using `Parameters` in `finally` `tasks`](#when-expressions-using-parameters-in-finally-tasks)
-      - [`when` expressions using `Results` in `finally` `tasks`](#when-expressions-using-results-in-finally-tasks)
+    - [Guard `finally` `Task` execution using `when` expressions](#guard-finally-task-execution-using-when-expressions)
+      - [`when` expressions using `Parameters` in `finally` `Tasks`](#when-expressions-using-parameters-in-finally-tasks)
+      - [`when` expressions using `Results` in `finally` 'Tasks`](#when-expressions-using-results-in-finally-tasks)
       - [`when` expressions using `Execution Status` of `PipelineTask` in `finally` `tasks`](#when-expressions-using-execution-status-of-pipelinetask-in-finally-tasks)
       - [`when` expressions using `Aggregate Execution Status` of `Tasks` in `finally` `tasks`](#when-expressions-using-aggregate-execution-status-of-tasks-in-finally-tasks)
     - [Known Limitations](#known-limitations)
-      - [Specifying `Resources` in `finally` tasks](#specifying-resources-in-finally-tasks)
       - [Cannot configure the `finally` task execution order](#cannot-configure-the-finally-task-execution-order)
-      - [Cannot specify execution `Conditions` in `finally` tasks](#cannot-specify-execution-conditions-in-finally-tasks)
-      - [Cannot configure `Pipeline` result with `finally`](#cannot-configure-pipeline-result-with-finally)
   - [Using Custom Tasks](#using-custom-tasks)
     - [Specifying the target Custom Task](#specifying-the-target-custom-task)
+    - [Specifying a Custom Task Spec in-line (or embedded)](#specifying-a-custom-task-spec-in-line-or-embedded)
     - [Specifying parameters](#specifying-parameters-1)
+    - [Specifying matrix](#specifying-matrix)
     - [Specifying workspaces](#specifying-workspaces-1)
     - [Using `Results`](#using-results-1)
-    - [Limitations](#limitations)
+    - [Specifying `Timeout`](#specifying-timeout)
+    - [Specifying `Retries`](#specifying-retries)
+    - [Known Custom Tasks](#known-custom-tasks)
   - [Code examples](#code-examples)
 
 ## Overview
@@ -73,47 +83,48 @@ A `Pipeline` definition supports the following fields:
       - [`tasks`](#adding-tasks-to-the-pipeline) - Specifies the `Tasks` that comprise the `Pipeline`
         and the details of their execution.
 - Optional:
-  - [`resources`](#specifying-resources) - **alpha only** Specifies
-    [`PipelineResources`](resources.md) needed or created by the `Tasks` comprising the `Pipeline`.
+  - [`params`](#specifying-parameters) - Specifies the `Parameters` that the `Pipeline` requires.
+  - [`workspaces`](#specifying-workspaces) - Specifies a set of Workspaces that the `Pipeline` requires.
   - [`tasks`](#adding-tasks-to-the-pipeline):
-      - `resources.inputs` / `resource.outputs`
-        - [`from`](#using-the-from-parameter) - Indicates the data for a [`PipelineResource`](resources.md)
-          originates from the output of a previous `Task`.
-      - [`runAfter`](#using-the-runafter-parameter) - Indicates that a `Task`
-        should execute after one or more other `Tasks` without output linking.
-      - [`retries`](#using-the-retries-parameter) - Specifies the number of times to retry the
-        execution of a `Task` after a failure. Does not apply to execution cancellations.
-      - [`conditions`](#guard-task-execution-using-conditions) - Specifies `Conditions` that only allow a `Task`
-        to execute if they successfully evaluate.
+      - [`name`](#adding-tasks-to-the-pipeline) - the name of this `Task` within the context of this `Pipeline`.
+      - [`displayName`](#adding-tasks-to-the-pipeline) - a user-facing name of this `Task` within the context of this `Pipeline`.
+      - [`description`](#adding-tasks-to-the-pipeline) - a description of this `Task` within the context of this `Pipeline`.
+      - [`taskRef`](#adding-tasks-to-the-pipeline) - a reference to a `Task` definition.
+      - [`taskSpec`](#adding-tasks-to-the-pipeline) - a specification of a `Task`.
+      - [`runAfter`](#using-the-runafter-field) - Indicates that a `Task` should execute after one or more other
+        `Tasks` without output linking.
+      - [`retries`](#using-the-retries-field) - Specifies the number of times to retry the execution of a `Task` after
+        a failure. Does not apply to execution cancellations.
+      - [`when`](#guard-finally-task-execution-using-when-expressions) - Specifies `when` expressions that guard
+        the execution of a `Task`; allow execution only when all `when` expressions evaluate to true.
       - [`timeout`](#configuring-the-failure-timeout) - Specifies the timeout before a `Task` fails.
-  - [`results`](#configuring-execution-results-at-the-pipeline-level) - Specifies the location to which
-    the `Pipeline` emits its execution results.
+      - [`params`](#specifying-parameters-in-pipelinetasks) - Specifies the `Parameters` that a `Task` requires.
+      - [`workspaces`](#specifying-workspaces-in-pipelinetasks) - Specifies the `Workspaces` that a `Task` requires.
+      - [`matrix`](#specifying-matrix-in-pipelinetasks) - Specifies the `Parameters` used to fan out a `Task` into
+        multiple `TaskRuns` or `Runs`.
+  - [`results`](#emitting-results-from-a-pipeline) - Specifies the location to which the `Pipeline` emits its execution
+    results.
+  - [`displayName`](#specifying-a-display-name) - is a user-facing name of the pipeline that may be used to populate a UI.
   - [`description`](#adding-a-description) - Holds an informative description of the `Pipeline` object.
-  - [`finally`](#adding-finally-to-the-pipeline) - Specifies one or more `Tasks`
-    to be executed in parallel after all other tasks have completed.
+  - [`finally`](#adding-finally-to-the-pipeline) - Specifies one or more `Tasks` to be executed in parallel after
+    all other tasks have completed.
+    - [`name`](#adding-finally-to-the-pipeline) - the name of this `Task` within the context of this `Pipeline`.
+    - [`displayName`](#adding-finally-to-the-pipeline) - a user-facing name of this `Task` within the context of this `Pipeline`.
+    - [`description`](#adding-finally-to-the-pipeline) - a description of this `Task` within the context of this `Pipeline`.
+    - [`taskRef`](#adding-finally-to-the-pipeline) - a reference to a `Task` definition.
+    - [`taskSpec`](#adding-finally-to-the-pipeline) - a specification of a `Task`.
+    - [`retries`](#using-the-retries-field) - Specifies the number of times to retry the execution of a `Task` after
+      a failure. Does not apply to execution cancellations.
+    - [`when`](#guard-finally-task-execution-using-when-expressions) - Specifies `when` expressions that guard
+      the execution of a `Task`; allow execution only when all `when` expressions evaluate to true.
+    - [`timeout`](#configuring-the-failure-timeout) - Specifies the timeout before a `Task` fails.
+    - [`params`](#specifying-parameters-in-finally-tasks) - Specifies the `Parameters` that a `Task` requires.
+    - [`workspaces`](#specifying-workspaces-in-finally-tasks) - Specifies the `Workspaces` that a `Task` requires.
+    - [`matrix`](#specifying-matrix-in-finally-tasks) - Specifies the `Parameters` used to fan out a `Task` into
+      multiple `TaskRuns` or `Runs`.
 
 [kubernetes-overview]:
   https://kubernetes.io/docs/concepts/overview/working-with-objects/kubernetes-objects/#required-fields
-
-## Specifying `Resources`
-
-> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
->
-> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
-> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
-
-A `Pipeline` requires [`PipelineResources`](resources.md) to provide inputs and store outputs
-for the `Tasks` that comprise it. You can declare those in the `resources` field in the `spec`
-section of the `Pipeline` definition. Each entry requires a unique `name` and a `type`. For example:
-
-```yaml
-spec:
-  resources:
-    - name: my-repo
-      type: git
-    - name: my-image
-      type: image
-```
 
 ## Specifying `Workspaces`
 
@@ -142,12 +153,42 @@ spec:
           workspace: pipeline-ws1
 ```
 
+For simplicity you can also map the name of the `Workspace` in `PipelineTask` to match with
+the `Workspace` from the `Pipeline`.
+For example:
+
+```yaml
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: pipeline
+spec:
+  workspaces:
+    - name: source
+  tasks:
+    - name: gen-code
+      taskRef:
+        name: gen-code # gen-code expects a Workspace named "source"
+      workspaces:
+        - name: source # <- mapping workspace name
+    - name: commit
+      taskRef:
+        name: commit # commit expects a Workspace named "source"
+      workspaces:
+        - name: source # <- mapping workspace name
+      runAfter:
+        - gen-code
+```
+
 For more information, see:
 - [Using `Workspaces` in `Pipelines`](workspaces.md#using-workspaces-in-pipelines)
 - The [`Workspaces` in a `PipelineRun`](../examples/v1beta1/pipelineruns/workspaces.yaml) code example
 - The [variables available in a `PipelineRun`](variables.md#variables-available-in-a-pipeline), including `workspaces.<name>.bound`.
+- [Mapping `Workspaces`](https://github.com/tektoncd/community/blob/main/teps/0108-mapping-workspaces.md)
 
 ## Specifying `Parameters`
+
+(See also [Specifying Parameters in Tasks](tasks.md#specifying-parameters))
 
 You can specify global parameters, such as compilation flags or artifact names, that you want to supply
 to the `Pipeline` at execution time. `Parameters` are passed to the `Pipeline` from its corresponding
@@ -180,7 +221,7 @@ without specifying a value for `context`, that value will be used.
 by using [variable substitution](variables.md#variables-available-in-a-pipeline).
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: Pipeline
 metadata:
   name: pipeline-with-parameters
@@ -209,7 +250,7 @@ spec:
 The following `PipelineRun` supplies a value for `context`:
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
   name: pipelinerun-with-parameters
@@ -229,7 +270,7 @@ spec:
 
  Your `Pipeline` definition must reference at least one [`Task`](tasks.md).
 Each `Task` within a `Pipeline` must have a [valid](https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names)
-`name` and a `taskRef`. For example:
+`name` and a `taskRef` or a `taskSpec`. For example:
 
 ```yaml
 tasks:
@@ -238,28 +279,45 @@ tasks:
       name: build-push
 ```
 
-You can use [`PipelineResources`](#specifying-resources) as inputs and outputs for `Tasks`
-in the `Pipeline`. For example:
+**Note:** Using both `apiVersion` and `kind` will create [CustomRun](customruns.md), don't set `apiVersion` if only referring to [`Task`](tasks.md).
+
+or
 
 ```yaml
-spec:
-  tasks:
-    - name: build-the-image
-      taskRef:
-        name: build-push
-      resources:
-        inputs:
-          - name: workspace
-            resource: my-repo
-        outputs:
-          - name: image
-            resource: my-image
+tasks:
+  - name: say-hello
+    taskSpec:
+      steps:
+      - image: ubuntu
+        script: echo 'hello there'
 ```
 
-> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
->
-> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
-> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
+Note that any `task` specified in `taskSpec` will be the same version as the `Pipeline`.
+
+### Specifying Remote Tasks
+
+**([beta feature](https://github.com/tektoncd/pipeline/blob/main/docs/install.md#beta-features))**
+
+A `taskRef` field may specify a Task in a remote location such as git.
+Support for specific types of remote will depend on the Resolvers your
+cluster's operator has installed. For more information including a tutorial, please check [resolution docs](resolution.md). The below example demonstrates referencing a Task in git:
+
+```yaml
+tasks:
+- name: "go-build"
+  taskRef:
+    resolver: git
+    params:
+    - name: url
+      value: https://github.com/tektoncd/catalog.git
+    - name: revision
+      # value can use params declared at the pipeline level or a static value like main
+      value: $(params.gitRevision)
+    - name: pathInRepo
+      value: task/golang-build/0.3/golang-build.yaml
+```
+
+### Specifying `Parameters` in `PipelineTasks`
 
 You can also provide [`Parameters`](tasks.md#specifying-parameters):
 
@@ -276,22 +334,93 @@ spec:
           value: /workspace/examples/microservices/leeroy-web
 ```
 
+### Specifying `Matrix` in `PipelineTasks`
+
+> :seedling: **`Matrix` is an [alpha](install.md#alpha-features) feature.**
+> The `enable-api-fields` feature flag must be set to `"alpha"` to specify `Matrix` in a `PipelineTask`.
+>
+> :warning: This feature is in a preview mode.
+> It is still in a very early stage of development and is not yet fully functional.
+
+You can also provide [`Parameters`](tasks.md#specifying-parameters) through the `matrix` field:
+
+```yaml
+spec:
+  tasks:
+    - name: browser-test
+      taskRef:
+        name: browser-test
+      matrix:
+        params:
+        - name: browser
+          value:
+          - chrome
+          - safari
+          - firefox
+        include:
+          - name: build-1
+            params:
+              - name: browser
+                value: chrome
+              - name: url
+                value: some-url
+```
+
+For further information, read [`Matrix`](./matrix.md).
+
+### Specifying `Workspaces` in `PipelineTasks`
+
+You can also provide [`Workspaces`](tasks.md#specifying-workspaces):
+
+```yaml
+spec:
+  tasks:
+    - name: use-workspace
+      taskRef:
+        name: gen-code # gen-code expects a workspace with name "output"
+      workspaces:
+        - name: output
+          workspace: shared-ws
+```
+
 ### Tekton Bundles
 
-**Note: This is only allowed if `enable-tekton-oci-bundles` is set to
-`"true"` in the `feature-flags` configmap, see [`install.md`](./install.md#customizing-the-pipelines-controller-behavior)**
+A `Tekton Bundle` is an OCI artifact that contains Tekton resources like `Tasks` which can be referenced within a `taskRef`.
 
-You may also specify your `Task` reference using a `Tekton Bundle`. A `Tekton Bundle` is an OCI artifact that
-contains Tekton resources like `Tasks` which can be referenced within a `taskRef`.
+There is currently a hard limit of 20 objects in a bundle.
 
- ```yaml
- spec:
-   tasks:
-     - name: hello-world
-       taskRef:
-         name: echo-task
-         bundle: docker.com/myrepo/mycatalog
- ```
+You can reference a `Tekton bundle` in a `TaskRef` in both `v1` and `v1beta1` using [remote resolution](./bundle-resolver.md#pipeline-resolution). The example syntax shown below for `v1` uses remote resolution and requires enabling [beta features](./additional-configs.md#beta-features).
+
+In `v1beta1`, you can also reference a `Tekton bundle` using OCI bundle syntax, which has been deprecated in favor of remote resolution. The example shown below for `v1beta1` uses OCI bundle syntax, and requires enabling `enable-tekton-oci-bundles: "true"` feature flag.
+
+
+{{< tabs >}}
+{{% tab "v1 & v1beta1" %}}
+```yaml
+spec:
+  taskRef:
+    resolver: bundles
+    params:
+    - name: bundle
+      value: docker.io/myrepo/mycatalog
+    - name: name
+      value: echo-task
+    - name: kind
+      value: Task
+```
+{{% /tab %}}
+
+{{% tab "v1beta1" %}}
+```yaml
+spec:
+  tasks:
+    - name: hello-world
+      taskRef:
+        name: echo-task
+        bundle: docker.com/myrepo/mycatalog
+```
+{{% /tab %}}
+{{< /tabs >}}
 
 Here, the `bundle` field is the full reference url to the artifact. The name is the
 `metadata.name` field of the `Task`.
@@ -299,25 +428,63 @@ Here, the `bundle` field is the full reference url to the artifact. The name is 
 You may also specify a `tag` as you would with a Docker image which will give you a fixed,
 repeatable reference to a `Task`.
 
- ```yaml
- spec:
-   tasks:
-     - name: hello-world
-       taskRef:
-         name: echo-task
-         bundle: docker.com/myrepo/mycatalog:v1.0.1
- ```
+{{< tabs >}}
+{{% tab "v1 & v1beta1" %}}
+```yaml
+spec:
+  taskRef:
+    resolver: bundles
+    params:
+    - name: bundle
+      value: docker.io/myrepo/mycatalog:v1.0.1
+    - name: name
+      value: echo-task
+    - name: kind
+      value: Task
+```
+{{% /tab %}}
+
+{{% tab "v1beta1" %}}
+```yaml
+spec:
+  tasks:
+    - name: hello-world
+      taskRef:
+        name: echo-task
+        bundle: docker.com/myrepo/mycatalog:v1.0.1
+```
+{{% /tab %}}
+{{< /tabs >}}
 
 You may also specify a fixed digest instead of a tag.
 
- ```yaml
- spec:
-   tasks:
-     - name: hello-world
-       taskRef:
-         name: echo-task
-         bundle: docker.io/myrepo/mycatalog@sha256:abc123
- ```
+{{< tabs >}}
+{{% tab "v1 & v1beta1" %}}
+```yaml
+spec:
+  taskRef:
+    resolver: bundles
+    params:
+    - name: bundle
+      value: docker.io/myrepo/mycatalog@sha256:abc123
+    - name: name
+      value: echo-task
+    - name: kind
+      value: Task
+```
+{{% /tab %}}
+
+{{% tab "v1beta1" %}}
+```yaml
+spec:
+  tasks:
+    - name: hello-world
+      taskRef:
+        name: echo-task
+        bundle: docker.io/myrepo/mycatalog@sha256:abc123
+```
+{{% /tab %}}
+{{< /tabs >}}
 
 Any of the above options will fetch the image using the `ImagePullSecrets` attached to the
 `ServiceAccount` specified in the `PipelineRun`.
@@ -329,50 +496,10 @@ run that `Task` without registering it in the cluster allowing multiple versions
 `Tekton Bundles` may be constructed with any toolsets that produce valid OCI image artifacts
 so long as the artifact adheres to the [contract](tekton-bundle-contracts.md).
 
-### Using the `from` parameter
+### Using the `runAfter` field
 
-If a `Task` in your `Pipeline` needs to use the output of a previous `Task`
-as its input, use the optional `from` parameter to specify a list of `Tasks`
-that must execute **before** the `Task` that requires their outputs as its
-input. When your target `Task` executes, only the version of the desired
-`PipelineResource` produced by the last `Task` in this list is used. The
-`name` of this output `PipelineResource` output must match the `name` of the
-input `PipelineResource` specified in the `Task` that ingests it.
-
-In the example below, the `deploy-app` `Task` ingests the output of the `build-app`
-`Task` named `my-image` as its input.  Therefore, the `build-app` `Task` will
-execute before the `deploy-app` `Task` regardless of the order in which those
-`Tasks` are declared in the `Pipeline`.
-
-```yaml
-- name: build-app
-  taskRef:
-    name: build-push
-  resources:
-    outputs:
-      - name: image
-        resource: my-image
-- name: deploy-app
-  taskRef:
-    name: deploy-kubectl
-  resources:
-    inputs:
-      - name: image
-        resource: my-image
-        from:
-          - build-app
-```
-
-> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
->
-> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
-> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
-
-### Using the `runAfter` parameter
-
-If you need your `Tasks` to execute in a specific order within the `Pipeline`
-but they don't have resource dependencies that require the `from` parameter,
-use the `runAfter` parameter to indicate that a `Task` must execute after
+If you need your `Tasks` to execute in a specific order within the `Pipeline`,
+use the `runAfter` field to indicate that a `Task` must execute after
 one or more other `Tasks`.
 
 In the example below, we want to test the code before we build it. Since there
@@ -381,39 +508,38 @@ to indicate that `test-app` must run before it, regardless of the order in which
 they are referenced in the `Pipeline` definition.
 
 ```yaml
+workspaces:
+- name: source
+tasks:
 - name: test-app
   taskRef:
     name: make-test
-  resources:
-    inputs:
-      - name: workspace
-        resource: my-repo
+  workspaces:
+  - name: source
+    workspace: source
 - name: build-app
   taskRef:
     name: kaniko-build
   runAfter:
     - test-app
-  resources:
-    inputs:
-      - name: workspace
-        resource: my-repo
+  workspaces:
+  - name: source
+    workspace: source
 ```
 
-> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
->
-> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
-> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
-
-### Using the `retries` parameter
+### Using the `retries` field
 
 For each `Task` in the `Pipeline`, you can specify the number of times Tekton
 should retry its execution when it fails. When a `Task` fails, the corresponding
-`TaskRun` sets its `Succeeded` `Condition` to `False`. The `retries` parameter
-instructs Tekton to retry executing the `Task` when this happens.
+`TaskRun` sets its `Succeeded` `Condition` to `False`. The `retries` field
+instructs Tekton to retry executing the `Task` when this happens. `retries` are executed
+even when other `Task`s in the `Pipeline` have failed, unless the `PipelineRun` has
+been [cancelled](./pipelineruns.md#cancelling-a-pipelinerun) or
+[gracefully cancelled](./pipelineruns.md#gracefully-cancelling-a-pipelinerun).
 
 If you expect a `Task` to encounter problems during execution (for example,
 you know that there will be issues with network connectivity or missing
-dependencies), set its `retries` parameter to a suitable value greater than 0.
+dependencies), set its `retries` field to a suitable value greater than 0.
 If you don't explicitly specify a value, Tekton does not attempt to execute
 the failed `Task` again.
 
@@ -434,9 +560,13 @@ tasks:
 To run a `Task` only when certain conditions are met, it is possible to _guard_ task execution using the `when` field. The `when` field allows you to list a series of references to `when` expressions.
 
 The components of `when` expressions are `input`, `operator` and `values`:
-- `input` is the input for the `when` expression which can be static inputs or variables ([`Parameters`](#specifying-parameters) or [`Results`](#using-results)). If the `input` is not provided, it defaults to an empty string.
-- `operator` represents an `input`'s relationship to a set of `values`. A valid `operator` must be provided, which can be either `in` or `notin`.
-- `values` is an array of string values. The `values` array must be provided and be non-empty. It can contain static values or variables ([`Parameters`](#specifying-parameters), [`Results`](#using-results) or [a Workspaces's `bound` state](#specifying-workspaces)).
+
+| Component  | Description                                                                                                | Syntax                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+|------------|------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `input`    | Input for the `when` expression, defaults to an empty string if not provided.                              | * Static values e.g. `"ubuntu"`<br/> * Variables ([parameters](#specifying-parameters) or [results](#using-results)) e.g. `"$(params.image)"` or `"$(tasks.task1.results.image)"` or `"$(tasks.task1.results.array-results[1])"`                                                                                                                                                                                                                                               |
+| `operator` | `operator` represents an `input`'s relationship to a set of `values`, a valid `operator` must be provided. | `in` or `notin`                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `values`   | An array of string values, the `values` array must be provided and has to be non-empty.                    | * An array param e.g. `["$(params.images[*])"]`<br/> * An array result of a task `["$(tasks.task1.results.array-results[*])"]`<br/> * `values` can contain static values e.g. `"ubuntu"`<br/> * `values` can contain variables ([parameters](#specifying-parameters) or [results](#using-results)) or [a Workspaces's `bound` state](#specifying-workspaces) e.g. `["$(params.image)"]` or `["$(tasks.task1.results.image)"]` or `["$(tasks.task1.results.array-results[1])"]` |
+
 
 The [`Parameters`](#specifying-parameters) are read from the `Pipeline` and [`Results`](#using-results) are read directly from previous [`Tasks`](#adding-tasks-to-the-pipeline). Using [`Results`](#using-results) in a `when` expression in a guarded `Task` introduces a resource dependency on the previous `Task` that produced the `Result`.
 
@@ -484,8 +614,6 @@ tasks:
 
 For an end-to-end example, see [PipelineRun with `when` expressions](../examples/v1beta1/pipelineruns/pipelinerun-with-when-expressions.yaml).
 
-When `when` expressions are specified in a `Task`, [`Conditions`](#guard-task-execution-using-conditions) should not be specified in the same `Task`. The `Pipeline` will be rejected as invalid if both `when` expressions and `Conditions` are included.
-
 There are a lot of scenarios where `when` expressions can be really useful. Some of these are:
 - Checking if the name of a git branch matches
 - Checking if the `Result` of a previous `Task` is as expected
@@ -496,32 +624,13 @@ There are a lot of scenarios where `when` expressions can be really useful. Some
 
 #### Guarding a `Task` and its dependent `Tasks`
 
-> :warning: **Scoping `when` expressions to a `Task` and its dependent `Tasks` is deprecated.**
->
-> Consider migrating to scoping `when` expressions to the guarded `Task` only instead.
-> Read more in the [documentation](#guarding-a-task-only) and [TEP-0059: Skipping Strategies][tep-0059].
-> 
-[tep-0059]: https://github.com/tektoncd/community/blob/main/teps/0059-skipping-strategies.md
-
-To guard a `Task` and its dependent `Tasks`, set the global default scope of `when` expressions to `Task` using the
-`scope-when-expressions-to-task` field in [`config/config-feature-flags.yaml`](install.md#customizing-the-pipelines-controller-behavior)
-by changing it to "false".
-
-When  `when` expressions evaluate to `False`, and `scope-when-expressions-to-task` is set to "false", the `Task` and 
-its dependent `Tasks` will be skipped while the rest of the `Pipeline` will execute. Dependencies between `Tasks` can
-be either ordering ([`runAfter`](https://github.com/tektoncd/pipeline/blob/main/docs/pipelines.md#using-the-runafter-parameter))
-or resource (e.g. [`Results`](https://github.com/tektoncd/pipeline/blob/main/docs/pipelines.md#using-results))
-dependencies, as further described in [configuring execution order](#configuring-the-task-execution-order). The global
-default scope of `when` expressions is set to a `Task` only; `scope-when-expressions-to-task` field in 
-[`config/config-feature-flags.yaml`](install.md#customizing-the-pipelines-controller-behavior) defaults to "true".
-
 To guard a `Task` and its dependent Tasks:
 - cascade the `when` expressions to the specific dependent `Tasks` to be guarded as well
 - compose the `Task` and its dependent `Tasks` as a unit to be guarded and executed together using `Pipelines` in `Pipelines`
 
 ##### Cascade `when` expressions to the specific dependent `Tasks`
 
-Pick and choose which specific dependent `Tasks` to guard as well, and cascade the `when` expressions to those `Tasks`. 
+Pick and choose which specific dependent `Tasks` to guard as well, and cascade the `when` expressions to those `Tasks`.
 
 Taking the use case below, a user who wants to guard `manual-approval` and its dependent `Tasks`:
 
@@ -542,7 +651,7 @@ The user can design the `Pipeline` to solve their use case as such:
 
 ```yaml
 tasks:
-...
+#...
 - name: manual-approval
   runAfter:
     - tests
@@ -582,12 +691,12 @@ tasks:
       value: $(tasks.manual-approval.results.approver)
   taskRef:
     name: slack-msg
-```  
+```
 
 ##### Compose using Pipelines in Pipelines
 
-Compose a set of `Tasks` as a unit of execution using `Pipelines` in `Pipelines`, which allows for guarding a `Task` and 
-its dependent `Tasks` (as a sub-`Pipeline`) using `when` expressions. 
+Compose a set of `Tasks` as a unit of execution using `Pipelines` in `Pipelines`, which allows for guarding a `Task` and
+its dependent `Tasks` (as a sub-`Pipeline`) using `when` expressions.
 
 **Note:** `Pipelines` in `Pipelines` is an [experimental feature](https://github.com/tektoncd/experimental/tree/main/pipelines-in-pipelines)
 
@@ -635,11 +744,11 @@ tasks:
         value: $(tasks.manual-approval.results.approver)
     taskRef:
       name: slack-msg
-      
+
 ---
 ## main pipeline
 tasks:
-...
+#...
 - name: approve-build-deploy-slack
   runAfter:
     - tests
@@ -658,12 +767,12 @@ tasks:
 
 When `when` expressions evaluate to `False`, the `Task` will be skipped and:
 - The ordering-dependent `Tasks` will be executed
-- The resource-dependent `Tasks` (and their dependencies) will be skipped because of missing `Results` from the skipped 
-  parent `Task`. When we add support for [default `Results`](https://github.com/tektoncd/community/pull/240), then the 
-  resource-dependent `Tasks` may be executed if the default `Results` from the skipped parent `Task` are specified. In 
+- The resource-dependent `Tasks` (and their dependencies) will be skipped because of missing `Results` from the skipped
+  parent `Task`. When we add support for [default `Results`](https://github.com/tektoncd/community/pull/240), then the
+  resource-dependent `Tasks` may be executed if the default `Results` from the skipped parent `Task` are specified. In
   addition, if a resource-dependent `Task` needs a file from a guarded parent `Task` in a shared `Workspace`, make sure
-  to handle the execution of the child `Task` in case the expected file is missing from the `Workspace` because the 
-  guarded parent `Task` is skipped. 
+  to handle the execution of the child `Task` in case the expected file is missing from the `Workspace` because the
+  guarded parent `Task` is skipped.
 
 On the other hand, the rest of the `Pipeline` will continue executing.
 
@@ -684,7 +793,7 @@ Taking the use case above, a user who wants to guard `manual-approval` only can 
 
 ```yaml
 tasks:
-...
+#...
 - name: manual-approval
   runAfter:
     - tests
@@ -716,79 +825,13 @@ tasks:
     name: slack-msg
 ```
 
-With `when` expressions scoped to `Task`, if `manual-approval` is skipped, execution of its dependent `Tasks` 
-(`slack-msg`, `build-image` and `deploy-image`) would be unblocked regardless:
+If `manual-approval` is skipped, execution of its dependent `Tasks` (`slack-msg`, `build-image` and `deploy-image`)
+would be unblocked regardless:
 - `build-image` and `deploy-image` should be executed successfully
 - `slack-msg` will be skipped because it is missing the `approver` `Result` from `manual-approval`
   - dependents of `slack-msg` would have been skipped too if it had any of them
-  - if `manual-approval` specifies a default `approver` `Result`, such as "None", then `slack-msg` would be executed 
+  - if `manual-approval` specifies a default `approver` `Result`, such as "None", then `slack-msg` would be executed
     ([supporting default `Results` is in progress](https://github.com/tektoncd/community/pull/240))
-
-### Guard `Task` execution using `Conditions`
-
-**Note:** `Conditions` are [deprecated](./deprecations.md), use [`when` expressions](#guard-task-execution-using-when-expressions) instead.
-
-To run a `Task` only when certain conditions are met, it is possible to _guard_ task execution using
-the `conditions` field. The `conditions` field allows you to list a series of references to
-[`Condition`](./conditions.md) resources. The declared `Conditions` are run before the `Task` is run.
-If all of the conditions successfully evaluate, the `Task` is run. If any of the conditions fails,
-the `Task` is not run and the `TaskRun` status field `ConditionSucceeded` is set to `False` with the
-reason set to `ConditionCheckFailed`.
-
-In this example, `is-master-branch` refers to a [Condition](conditions.md) resource. The `deploy`
-task will only be executed if the condition successfully evaluates.
-
-```yaml
-tasks:
-  - name: deploy-if-branch-is-master
-    conditions:
-      - conditionRef: is-master-branch
-        params:
-          - name: branch-name
-            value: my-value
-    taskRef:
-      name: deploy
-```
-
-Unlike regular task failures, condition failures do not automatically fail the entire `PipelineRun` --
-other tasks that are **not dependent** on the `Task` (via `from` or `runAfter`) are still run.
-
-In this example, `(task C)` has a `condition` set to _guard_ its execution. If the condition
-is **not** successfully evaluated, task `(task D)` will not be run, but all other tasks in the pipeline
-that not depend on `(task C)` will be executed and the `PipelineRun` will successfully complete.
-
-  ```
-         (task B) — (task E)
-       /
-   (task A)
-       \
-         (guarded task C) — (task D)
-  ```
-
-Resources in conditions can also use the [`from`](#using-the-from-parameter) field to indicate that they
-expect the output of a previous task as input. As with regular Pipeline Tasks, using `from`
-implies ordering --  if task has a condition that takes in an output resource from
-another task, the task producing the output resource will run first:
-
-```yaml
-tasks:
-  - name: first-create-file
-    taskRef:
-      name: create-file
-    resources:
-      outputs:
-        - name: workspace
-          resource: source-repo
-  - name: then-check
-    conditions:
-      - conditionRef: "file-exists"
-        resources:
-          - name: workspace
-            resource: source-repo
-            from: [first-create-file]
-    taskRef:
-      name: echo-hello
-```
 
 ### Configuring the failure timeout
 
@@ -823,9 +866,11 @@ performed by the Tekton Controller when a PipelineRun is executed.
 See the [complete list of variable substitutions for Pipelines](./variables.md#variables-available-in-a-pipeline)
 and the [list of fields that accept substitutions](./variables.md#fields-that-accept-variable-substitutions).
 
+For an end-to-end example, see [using context variables](../examples/v1beta1/pipelineruns/using_context_variables.yaml).
+
 ### Using the `retries` and `retry-count` variable substitutions
 
-Tekton supports variable substitution for the [`retries`](#using-the-retries-parameter)
+Tekton supports variable substitution for the [`retries`](#using-the-retries-field)
 parameter of `PipelineTask`. Variables like `context.pipelineTask.retries` and
 `context.task.retry-count` can be added to the parameters of a `PipelineTask`.
 `context.pipelineTask.retries` will be replaced by `retries` of the `PipelineTask`, while
@@ -865,7 +910,21 @@ Tasks can emit [`Results`](tasks.md#emitting-results) when they execute. A Pipel
 Sharing `Results` between `Tasks` in a `Pipeline` happens via
 [variable substitution](variables.md#variables-available-in-a-pipeline) - one `Task` emits
 a `Result` and another receives it as a `Parameter` with a variable such as
-`$(tasks.<task-name>.results.<result-name>)`.
+`$(tasks.<task-name>.results.<result-name>)`. Pipeline support two new types of
+results and parameters: array `[]string` and object `map[string]string`.
+Array and Object result is a beta feature and can be enabled by setting `enable-api-fields` to `alpha` or `beta`.
+
+| Result Type | Parameter Type | Specification                                    | `enable-api-fields` |
+|-------------|----------------|--------------------------------------------------|---------------------|
+| string      | string         | `$(tasks.<task-name>.results.<result-name>)`     | stable              |
+| array       | array          | `$(tasks.<task-name>.results.<result-name>[*])`  | alpha or beta       |
+| array       | string         | `$(tasks.<task-name>.results.<result-name>[i])`  | alpha or beta       |
+| object      | object         | `$(tasks.<task-name>.results.<result-name>[*])`  | alpha or beta              |
+| object      | string         | `$(tasks.<task-name>.results.<result-name>.key)` | alpha or beta              |
+
+**Note:** Whole Array and Object `Results` (using star notation) cannot be referred in `script`.
+
+**Note:** `Matrix` does not support `object` and `array` results.
 
 When one `Task` receives the `Results` of another, there is a dependency created between those
 two `Tasks`. In order for the receiving `Task` to get data from another `Task's` `Result`,
@@ -880,6 +939,14 @@ before this one.
 params:
   - name: foo
     value: "$(tasks.checkout-source.results.commit)"
+  - name: array-params
+    value: "$(tasks.checkout-source.results.array-results[*])"
+  - name: array-indexing-params
+    value: "$(tasks.checkout-source.results.array-results[1])"
+  - name: object-params
+    value: "$(tasks.checkout-source.results.object-results[*])"
+  - name: object-element-params
+    value: "$(tasks.checkout-source.results.object-results.objectkey)"
 ```
 
 **Note:** If `checkout-source` exits successfully without initializing `commit` `Result`,
@@ -901,7 +968,7 @@ when:
 
 For an end-to-end example, see [`Task` `Results` in a `PipelineRun`](../examples/v1beta1/pipelineruns/task_results_example.yaml).
 
-Note that `when` expressions are whitespace-sensitive.  In particular, when producing results intended for inputs to `when` 
+Note that `when` expressions are whitespace-sensitive.  In particular, when producing results intended for inputs to `when`
 expressions that may include newlines at their close (e.g. `cat`, `jq`), you may wish to truncate them.
 
 ```yaml
@@ -942,6 +1009,30 @@ results:
 
 For an end-to-end example, see [`Results` in a `PipelineRun`](../examples/v1beta1/pipelineruns/pipelinerun-results.yaml).
 
+Object result and array result are beta features,
+see [`Array and Object Results` in a `PipelineRun`](../examples/v1beta1/pipelineruns/beta/pipeline-emitting-results.yaml).
+
+```yaml
+    results:
+      - name: array-results
+        type: array
+        description: whole array
+        value: $(tasks.task1.results.array-results[*])
+      - name: array-indexing-results
+        type: string
+        description: array element
+        value: $(tasks.task1.results.array-results[1])
+      - name: object-results
+        type: object
+        description: whole object
+        value: $(tasks.task2.results.object-results[*])
+      - name: object-element
+        type: string
+        description: object element
+        value: $(tasks.task2.results.object-results.foo)
+```
+
+
 A `Pipeline Result` is not emitted if any of the following are true:
 - A `PipelineTask` referenced by the `Pipeline Result` failed. The `PipelineRun` will also
 have failed.
@@ -955,6 +1046,7 @@ This will cause an `InvalidTaskResultReference` validation error during `Pipelin
 
 **Note:** Since a `Pipeline Result` can contain references to multiple `Task Results`, if any of those
 `Task Result` references are invalid the entire `Pipeline Result` is not emitted.
+**Note:** If a `PipelineTask` referenced by the `Pipeline Result` was skipped, the `Pipeline Result` will not be emitted and the `PipelineRun` will not fail due to a missing result.
 
 ## Configuring the `Task` execution order
 
@@ -965,67 +1057,38 @@ without getting stuck in an infinite loop.
 
 This is done using:
 - _resource dependencies_:
-  - [`from`](#using-the-from-parameter) clauses on the [`PipelineResources`](resources.md) used by each `Task`
-  - [`results`](#configuring-execution-results-at-the-pipeline-level) of one `Task` being pa `params` or
-    `when` expressions of another
-    
+  - [`results`](#emitting-results-from-a-pipeline) of one `Task` being passed into `params` or `when` expressions of
+    another
+
 - _ordering dependencies_:
-  - [`runAfter`](#using-the-runafter-parameter) clauses on the corresponding `Tasks`
+  - [`runAfter`](#using-the-runafter-field) clauses on the corresponding `Tasks`
 
 For example, the `Pipeline` defined as follows
 
 ```yaml
+tasks:
 - name: lint-repo
   taskRef:
     name: pylint
-  resources:
-    inputs:
-      - name: workspace
-        resource: my-repo
 - name: test-app
   taskRef:
     name: make-test
-  resources:
-    inputs:
-      - name: workspace
-        resource: my-repo
 - name: build-app
   taskRef:
     name: kaniko-build-app
   runAfter:
     - test-app
-  resources:
-    inputs:
-      - name: workspace
-        resource: my-repo
-    outputs:
-      - name: image
-        resource: my-app-image
 - name: build-frontend
   taskRef:
     name: kaniko-build-frontend
   runAfter:
     - test-app
-  resources:
-    inputs:
-      - name: workspace
-        resource: my-repo
-    outputs:
-      - name: image
-        resource: my-frontend-image
 - name: deploy-all
   taskRef:
     name: deploy-kubectl
-  resources:
-    inputs:
-      - name: my-app-image
-        resource: my-app-image
-        from:
-          - build-app
-      - name: my-frontend-image
-        resource: my-frontend-image
-        from:
-          - build-frontend
+  runAfter:
+    - build-app
+    - build-frontend
 ```
 
 executes according to the following graph:
@@ -1044,19 +1107,27 @@ build-app  build-frontend
 
 In particular:
 
-1. The `lint-repo` and `test-app` `Tasks` have no `from` or `runAfter` clauses
+1. The `lint-repo` and `test-app` `Tasks` have no `runAfter` clauses
    and start executing simultaneously.
 2. Once `test-app` completes, both `build-app` and `build-frontend` start
    executing simultaneously since they both `runAfter` the `test-app` `Task`.
 3. The `deploy-all` `Task` executes once both `build-app` and `build-frontend`
-   complete, since it ingests `PipelineResources` from both.
+   complete, since it is supposed to `runAfter` them both.
 4. The entire `Pipeline` completes execution once both `lint-repo` and `deploy-all`
    complete execution.
 
-> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
->
-> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
-> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
+## Specifying a display name
+
+The `displayName` field is an optional field that allows you to add a user-facing name of the `Pipeline` that can be used to populate a UI. For example:
+
+```yaml
+spec:
+  displayName: "Code Scan"
+  tasks:
+    - name: scan
+      taskRef:
+        name: sonar-scan
+```
 
 ## Adding a description
 
@@ -1090,9 +1161,6 @@ e.g. a mount point for credentials held in Secrets. To support that requirement,
 
 ```yaml
 spec:
-  resources:
-    - name: app-git
-      type: git
   workspaces:
     - name: shared-workspace
   tasks:
@@ -1102,10 +1170,6 @@ spec:
       workspaces:
         - name: shared-workspace
           workspace: shared-workspace
-      resources:
-        inputs:
-          - name: app-git
-            resource: app-git
   finally:
     - name: cleanup-workspace
       taskRef:
@@ -1114,11 +1178,6 @@ spec:
         - name: shared-workspace
           workspace: shared-workspace
 ```
-
-> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
->
-> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
-> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
 
 ### Specifying `Parameters` in `finally` tasks
 
@@ -1138,6 +1197,47 @@ spec:
         - name: url
           value: "someURL"
 ```
+
+### Specifying `matrix` in `finally` tasks
+
+> :seedling: **`Matrix` is an [alpha](install.md#alpha-features) feature.**
+> The `enable-api-fields` feature flag must be set to `"alpha"` to specify `Matrix` in a `PipelineTask`.
+>
+> :warning: This feature is in a preview mode.
+> It is still in a very early stage of development and is not yet fully functional.
+
+Similar to `tasks`, you can also provide [`Parameters`](tasks.md#specifying-parameters) through `matrix`
+in `finally` tasks:
+
+```yaml
+spec:
+  tasks:
+    - name: tests
+      taskRef:
+        name: integration-test
+  finally:
+    - name: report-results
+      taskRef:
+        name: report-results
+      params:
+        - name: url
+          value: "someURL"
+      matrix:
+        params:
+        - name: slack-channel
+          value:
+          - "foo"
+          - "bar"
+        include:
+          - name: build-1
+            params:
+              - name: slack-channel
+                value: "foo"
+              - name: flags
+                value: "-v"
+```
+
+For further information, read [`Matrix`](./matrix.md).
 
 ### Consuming `Task` execution results in `finally`
 
@@ -1159,10 +1259,28 @@ spec:
 `finally` tasks after all non-`finally` tasks are done.
 
 The controller resolves task results before executing the `finally` task `discover-git-commit`. If the task
-`clone-app-repo` failed or skipped with [when expression](#guard-task-execution-using-when-expressions) resulting in
-uninitialized task result `commit`, the `finally` Task `discover-git-commit` will be included in the list of
+`clone-app-repo` failed before initializing `commit` or skipped with [when expression](#guard-task-execution-using-when-expressions)
+resulting in uninitialized task result `commit`, the `finally` Task `discover-git-commit` will be included in the list of
 `skippedTasks` and continues executing rest of the `finally` tasks. The pipeline exits with `completion` instead of
 `success` if a `finally` task is added to the list of `skippedTasks`.
+
+### Consuming `Pipeline` result with `finally`
+
+`finally` tasks can emit `Results` and these results emitted from the `finally` tasks can be configured in the
+[Pipeline Results](#emitting-results-from-a-pipeline). References of `Results` from `finally` will follow the same naming conventions as referencing `Results` from `tasks`: ```$(finally.<finally-pipelinetask-name>.result.<result-name>)```.
+
+```yaml
+results:
+  - name: comment-count-validate
+    value: $(finally.check-count.results.comment-count-validate)
+finally:
+  - name: check-count
+    taskRef:
+      name: example-task-name
+```
+
+In this example, `pipelineResults` in `status` will show the name-value pair for the result `comment-count-validate` which is produced in the `Task` `example-task-name`.
+
 
 ### `PipelineRun` Status with `finally`
 
@@ -1170,22 +1288,22 @@ With `finally`, `PipelineRun` status is calculated based on `PipelineTasks` unde
 
 Without `finally`:
 
-| `PipelineTasks` under `tasks` | `PipelineRun` status | Reason |
-| ----------------------------- | -------------------- | ------ |
-| all `PipelineTasks` successful | `true` | `Succeeded` |
-| one or more `PipelineTasks` [skipped](conditions.md) and rest successful | `true` | `Completed` |
-| single failure of `PipelineTask` | `false` | `failed` |
+| `PipelineTasks` under `tasks`                                                                           | `PipelineRun` status | Reason      |
+|---------------------------------------------------------------------------------------------------------|----------------------|-------------|
+| all `PipelineTasks` successful                                                                          | `true`               | `Succeeded` |
+| one or more `PipelineTasks` [skipped](#guard-task-execution-using-when-expressions) and rest successful | `true`               | `Completed` |
+| single failure of `PipelineTask`                                                                        | `false`              | `failed`    |
 
 With `finally`:
 
-| `PipelineTasks` under `tasks` | `finally` tasks | `PipelineRun` status | Reason |
-| ----------------------------- | ----------- | -------------------- | ------ |
-| all `PipelineTask` successful | all `finally` tasks successful | `true` | `Succeeded` |
-| all `PipelineTask` successful | one or more failure of `finally` tasks | `false` | `Failed` |
-| one or more `PipelineTask` [skipped](conditions.md) and rest successful | all `finally` tasks successful | `true` | `Completed` |
-| one or more `PipelineTask` [skipped](conditions.md) and rest successful | one or more failure of `finally` tasks | `false` | `Failed` |
-| single failure of `PipelineTask` | all `finally` tasks successful | `false` | `failed` |
-| single failure of `PipelineTask` | one or more failure of `finally` tasks | `false` | `failed` |
+| `PipelineTasks` under `tasks`                                                                          | `finally` tasks                        | `PipelineRun` status | Reason      |
+|--------------------------------------------------------------------------------------------------------|----------------------------------------|----------------------|-------------|
+| all `PipelineTask` successful                                                                          | all `finally` tasks successful         | `true`               | `Succeeded` |
+| all `PipelineTask` successful                                                                          | one or more failure of `finally` tasks | `false`              | `Failed`    |
+| one or more `PipelineTask` [skipped](#guard-task-execution-using-when-expressions) and rest successful | all `finally` tasks successful         | `true`               | `Completed` |
+| one or more `PipelineTask` [skipped](#guard-task-execution-using-when-expressions) and rest successful | one or more failure of `finally` tasks | `false`              | `Failed`    |
+| single failure of `PipelineTask`                                                                       | all `finally` tasks successful         | `false`              | `failed`    |
+| single failure of `PipelineTask`                                                                       | one or more failure of `finally` tasks | `false`              | `failed`    |
 
 Overall, `PipelineRun` state transitioning is explained below for respective scenarios:
 
@@ -1223,11 +1341,11 @@ finally:
 
 This kind of variable can have any one of the values from the following table:
 
-| Status | Description |
-| ------- | -----------|
-| `Succeeded` | `taskRun` for the `pipelineTask` completed successfully |
-| `Failed` | `taskRun` for the `pipelineTask` completed with a failure or cancelled by the user |
-| `None` | the `pipelineTask` has been skipped or no execution information available for the `pipelineTask` |
+| Status      | Description                                                                                      |
+|-------------|--------------------------------------------------------------------------------------------------|
+| `Succeeded` | `taskRun` for the `pipelineTask` completed successfully                                          |
+| `Failed`    | `taskRun` for the `pipelineTask` completed with a failure or cancelled by the user               |
+| `None`      | the `pipelineTask` has been skipped or no execution information available for the `pipelineTask` |
 
 For an end-to-end example, see [`status` in a `PipelineRun`](../examples/v1beta1/pipelineruns/pipelinerun-task-execution-status.yaml).
 
@@ -1256,12 +1374,12 @@ finally:
 
 This kind of variable can have any one of the values from the following table:
 
-| Status | Description |
-| ------- | -----------|
-| `Succeeded` | all `tasks` have succeeded |
-| `Failed` | one ore more `tasks` failed |
-| `Completed` | all `tasks` completed successfully including one or more skipped tasks |
-| `None` | no aggregate execution status available (i.e. none of the above), one or more `tasks` could be pending/running/cancelled/timedout |
+| Status      | Description                                                                                                                       |
+|-------------|-----------------------------------------------------------------------------------------------------------------------------------|
+| `Succeeded` | all `tasks` have succeeded                                                                                                        |
+| `Failed`    | one ore more `tasks` failed                                                                                                       |
+| `Completed` | all `tasks` completed successfully including one or more skipped tasks                                                            |
+| `None`      | no aggregate execution status available (i.e. none of the above), one or more `tasks` could be pending/running/cancelled/timedout |
 
 For an end-to-end example, see [`$(tasks.status)` usage in a `Pipeline`](../examples/v1beta1/pipelineruns/pipelinerun-task-execution-status.yaml).
 
@@ -1279,7 +1397,7 @@ and [`send-to-channel-slack`](https://github.com/tektoncd/catalog/tree/main/task
 `Tasks`:
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
   generateName: pipelinerun-
@@ -1317,7 +1435,7 @@ spec:
 and [`github-add-comment`](https://github.com/tektoncd/catalog/tree/main/task/github-add-comment/0.2) Catalog `Tasks`:
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
   generateName: pipelinerun-
@@ -1354,7 +1472,7 @@ as demonstrated using [`golang-build`](https://github.com/tektoncd/catalog/tree/
 [`send-to-channel-slack`](https://github.com/tektoncd/catalog/tree/main/task/send-to-channel-slack/0.1) Catalog `Tasks`:
 
 ```yaml
-apiVersion: tekton.dev/v1beta1
+apiVersion: tekton.dev/v1 # or tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
   generateName: pipelinerun-
@@ -1398,90 +1516,31 @@ For an end-to-end example, see [PipelineRun with `when` expressions](../examples
 
 ### Known Limitations
 
-#### Specifying `Resources` in `finally` tasks
-
-Similar to `tasks`, you can use [PipelineResources](#specifying-resources) as inputs and outputs for
-`finally` tasks in the Pipeline. The only difference here is, final tasks with an input resource can not have a `from`
-clause like a `PipelineTask` from `tasks` section. For example:
-
-```yaml
-spec:
-  tasks:
-    - name: tests
-      taskRef:
-        Name: integration-test
-      resources:
-        inputs:
-          - name: source
-            resource: tektoncd-pipeline-repo
-        outputs:
-          - name: workspace
-            resource: my-repo
-  finally:
-    - name: clear-workspace
-      taskRef:
-        Name: clear-workspace
-      resources:
-        inputs:
-          - name: workspace
-            resource: my-repo
-            from: #invalid
-              - tests
-```
-
-> :warning: **`PipelineResources` are [deprecated](deprecations.md#deprecation-table).**
->
-> Consider using replacement features instead. Read more in [documentation](migrating-v1alpha1-to-v1beta1.md#replacing-pipelineresources-with-tasks)
-> and [TEP-0074](https://github.com/tektoncd/community/blob/main/teps/0074-deprecate-pipelineresources.md).
-
 #### Cannot configure the `finally` task execution order
 
 It's not possible to configure or modify the execution order of the `finally` tasks. Unlike `Tasks` in a `Pipeline`,
 all `finally` tasks run simultaneously and start executing once all `PipelineTasks` under `tasks` have settled which means
 no `runAfter` can be specified in `finally` tasks.
 
-#### Cannot specify execution `Conditions` in `finally` tasks
-
-`Tasks` in a `Pipeline` can be configured to run only if some conditions are satisfied using `conditions`. But the
-`finally` tasks are guaranteed to be executed after all `PipelineTasks` therefore no `conditions` can be specified in
-`finally` tasks.
-
-#### Cannot configure `Pipeline` result with `finally`
-
-`finally` tasks can emit `Results` but results emitted from the `finally` tasks can not be configured in the
-[Pipeline Results](#configuring-execution-results-at-the-pipeline-level). We are working on adding support for this
-(tracked in issue [#2710](https://github.com/tektoncd/pipeline/issues/2710)).
-
-```yaml
-results:
-  - name: comment-count-validate
-    value: $(finally.check-count.results.comment-count-validate)
-```
-
-In this example, `pipelineResults` in `status` will exclude the name-value pair for that result `comment-count-validate`.
-
-
 ## Using Custom Tasks
 
-**Note: This is only allowed if `enable-custom-tasks` is set to
-`"true"` in the `feature-flags` configmap, see [`install.md`](./install.md#customizing-the-pipelines-controller-behavior)**
+Custom Tasks have been promoted from `v1alpha1` to `v1beta1`. Starting from `v0.43.0` to `v0.46.0`, Pipeline Controller is able to create either `v1alpha1` or `v1beta1` Custom Task gated by a feature flag `custom-task-version`, defaulting to `v1beta1`. You can set `custom-task-version` to `v1alpha1` or `v1beta1` to control which version to create.
+
+Starting from `v0.47.0`, feature flag `custom-task-version` is removed and only `v1beta1` Custom Task will be supported. See the [migration doc](migrating-v1alpha1.Run-to-v1beta1.CustomRun.md) for details.
 
 [Custom Tasks](https://github.com/tektoncd/community/blob/main/teps/0002-custom-tasks.md)
 can implement behavior that doesn't correspond directly to running a workload in a `Pod` on the cluster.
 For example, a custom task might execute some operation outside of the cluster and wait for its execution to complete.
 
-A PipelineRun starts a custom task by creating a [`Run`](https://github.com/tektoncd/pipeline/blob/main/docs/runs.md) instead of a `TaskRun`.
+A `PipelineRun` starts a custom task by creating a [`CustomRun`](https://github.com/tektoncd/pipeline/blob/main/docs/customruns.md) instead of a `TaskRun`.
 In order for a custom task to execute, there must be a custom task controller running on the cluster
-that is responsible for watching and updating `Run`s which reference their type.
-If no such controller is running, those `Run`s will never complete and Pipelines using them will time out.
-
-Custom tasks are an **_experimental alpha feature_** and should be expected to change
-in breaking ways or even be removed.
+that is responsible for watching and updating `CustomRun`s which reference their type.
 
 ### Specifying the target Custom Task
 
 To specify the custom task type you want to execute, the `taskRef` field
-must include the custom task's `apiVersion` and `kind` as shown below:
+must include the custom task's `apiVersion` and `kind` as shown below.
+Using `apiVersion` will always create a `CustomRun`. If `apiVersion` is set, `kind` is required as well.
 
 ```yaml
 spec:
@@ -1492,7 +1551,9 @@ spec:
         kind: Example
 ```
 
-This creates a `Run` of a custom task of type `Example` in the `example.dev` API group with the version `v1alpha1`.
+This creates a `Run/CustomRun` of a custom task of type `Example` in the `example.dev` API group with the version `v1alpha1`.
+
+Validation error will be returned if `apiVersion` or `kind` is missing.
 
 You can also specify the `name` of a custom task resource object previously defined in the cluster.
 
@@ -1514,6 +1575,7 @@ some default behavior for executing unnamed tasks.
 
 ### Specifying a Custom Task Spec in-line (or embedded)
 
+**For `v1alpha1.Run`**
 ```yaml
 spec:
   tasks:
@@ -1521,25 +1583,40 @@ spec:
       taskSpec:
         apiVersion: example.dev/v1alpha1
         kind: Example
-          spec:
-            field1: value1
-            field2: value2
+        spec:
+          field1: value1
+          field2: value2
 ```
 
-If the custom task controller supports the in-line or embedded task spec, this will create a `Run` of a custom task of
+**For `v1beta1.CustomRun`**
+```yaml
+spec:
+  tasks:
+    - name: run-custom-task
+      taskSpec:
+        apiVersion: example.dev/v1alpha1
+        kind: Example
+        customSpec:
+          field1: value1
+          field2: value2
+```
+
+If the custom task controller supports the in-line or embedded task spec, this will create a `Run/CustomRun` of a custom task of
 type `Example` in the `example.dev` API group with the version `v1alpha1`.
 
 If the `taskSpec` is not supported, the custom task controller should produce proper validation errors.
 
 Please take a look at the
-[developer guide for custom controllers supporting `taskSpec`.](runs.md#developer-guide-for-custom-controllers-supporting-spec)
+developer guide for custom controllers supporting `taskSpec`:
+- [guidance for `Run`](runs.md#developer-guide-for-custom-controllers-supporting-spec)
+- [guidance for `CustomRun`](customruns.md#developer-guide-for-custom-controllers-supporting-customspec)
 
 `taskSpec` support for `pipelineRun` was designed and discussed in
 [TEP-0061](https://github.com/tektoncd/community/blob/main/teps/0061-allow-custom-task-to-be-embedded-in-pipeline.md)
 
 ### Specifying parameters
 
-If a custom task supports [`parameters`](tasks.md#parameters), you can use the
+If a custom task supports [`parameters`](tasks.md#specifying-parameters), you can use the
 `params` field to specify their values:
 
 ```yaml
@@ -1554,6 +1631,65 @@ spec:
         - name: foo
           value: bah
 ```
+
+## Context Variables
+
+The `Parameters` in the `Params` field will accept
+[context variables](variables.md) that will be substituted, including:
+
+* `PipelineRun` name, namespace and uid
+* `Pipeline` name
+* `PipelineTask` retries
+
+```yaml
+spec:
+  tasks:
+    - name: run-custom-task
+      taskRef:
+        apiVersion: example.dev/v1alpha1
+        kind: Example
+        name: myexample
+      params:
+        - name: foo
+          value: $(context.pipeline.name)
+```
+
+### Specifying matrix
+
+> :seedling: **`Matrix` is an [alpha](install.md#alpha-features) feature.**
+> The `enable-api-fields` feature flag must be set to `"alpha"` to specify `Matrix` in a `PipelineTask`.
+>
+> :warning: This feature is in a preview mode.
+> It is still in a very early stage of development and is not yet fully functional.
+
+If a custom task supports [`parameters`](tasks.md#specifying-parameters), you can use the
+`matrix` field to specify their values, if you want to fan:
+
+```yaml
+spec:
+  tasks:
+    - name: run-custom-task
+      taskRef:
+        apiVersion: example.dev/v1alpha1
+        kind: Example
+        name: myexample
+      params:
+        - name: foo
+          value: bah
+      matrix:
+        params:
+        - name: bar
+          value:
+            - qux
+            - thud
+        include:
+          - name: build-1
+            params:
+            - name: common-package
+              value: path-to-common-pkg
+```
+
+For further information, read [`Matrix`](./matrix.md).
 
 ### Specifying workspaces
 
@@ -1578,13 +1714,76 @@ Consult the documentation of the custom task that you are using to determine whe
 If the custom task produces results, you can reference them in a Pipeline using the normal syntax,
 `$(tasks.<task-name>.results.<result-name>)`.
 
-### Limitations
+### Specifying `Timeout`
 
-Pipelines do not support the following items with custom tasks:
-* Pipeline Resources
-* [`retries`](#using-the-retries-parameter)
-* [`timeout`](#configuring-the-failure-timeout)
-* Conditions (`Conditions` are deprecated.  Use [`when` expressions](#guard-task-execution-using-when-expressions) instead.)
+#### `v1alpha1.Run`
+If the custom task supports it as [we recommended](runs.md#developer-guide-for-custom-controllers-supporting-timeout), you can provide `timeout` to specify the maximum running time of a `CustomRun` (including all retry attempts or other operations).
+
+#### `v1beta1.CustomRun`
+If the custom task supports it as [we recommended](customruns.md#developer-guide-for-custom-controllers-supporting-timeout), you can provide `timeout` to specify the maximum running time of one `CustomRun` execution.
+
+```yaml
+spec:
+  tasks:
+    - name: run-custom-task
+      timeout: 2s
+      taskRef:
+        apiVersion: example.dev/v1alpha1
+        kind: Example
+        name: myexample
+```
+
+Consult the documentation of the custom task that you are using to determine whether it supports `Timeout`.
+
+### Specifying `Retries`
+If the custom task supports it, you can provide `retries` to specify how many times you want to retry the custom task.
+
+```yaml
+spec:
+  tasks:
+    - name: run-custom-task
+      retries: 2
+      taskRef:
+        apiVersion: example.dev/v1alpha1
+        kind: Example
+        name: myexample
+```
+
+Consult the documentation of the custom task that you are using to determine whether it supports `Retries`.
+
+### Known Custom Tasks
+
+We try to list as many known Custom Tasks as possible here so that users can easily find what they want. Please feel free to share the Custom Task you implemented in this table.
+
+#### v1beta1.CustomRun
+
+| Custom Task                      | Description                                                                                                                      |
+|:---------------------------------|:---------------------------------------------------------------------------------------------------------------------------------|
+| [Wait Task Beta][wait-task-beta] | Waits a given amount of time before succeeding, specified by an input parameter named duration. Support `timeout` and `retries`. |
+| [Approvals][approvals-beta]| Pauses the execution of `PipelineRuns` and waits for manual approvals. Version 0.6.0 and up. |
+
+#### v1alpha1.Run
+
+| Custom Task                                      | Description                                                                                                |
+|:-------------------------------------------------|:-----------------------------------------------------------------------------------------------------------|
+| [Pipeline Loops][pipeline-loops]                 | Runs a `Pipeline` in a loop with varying `Parameter` values.                                               |
+| [Common Expression Language][cel]                | Provides Common Expression Language support in Tekton Pipelines.                                           |
+| [Wait][wait]                                     | Waits a given amount of time, specified by a `Parameter` named "duration", before succeeding.              |
+| [Approvals][approvals-alpha]                     | Pauses the execution of `PipelineRuns` and waits for manual approvals. Version up to (and including) 0.5.0 |
+| [Pipelines in Pipelines][pipelines-in-pipelines] | Defines and executes a `Pipeline` in a `Pipeline`.                                                         |
+| [Task Group][task-group]                         | Groups `Tasks` together as a `Task`.                                                                       |
+| [Pipeline in a Pod][pipeline-in-pod]             | Runs `Pipeline` in a `Pod`.                                                                                |
+
+[pipeline-loops]: https://github.com/tektoncd/experimental/tree/f60e1cd8ce22ed745e335f6f547bb9a44580dc7c/pipeline-loops
+[task-loops]: https://github.com/tektoncd/experimental/tree/f60e1cd8ce22ed745e335f6f547bb9a44580dc7c/task-loops
+[cel]: https://github.com/tektoncd/experimental/tree/f60e1cd8ce22ed745e335f6f547bb9a44580dc7c/cel
+[wait]: https://github.com/tektoncd/experimental/tree/f60e1cd8ce22ed745e335f6f547bb9a44580dc7c/wait-task
+[approvals-alpha]: https://github.com/automatiko-io/automatiko-approval-task/tree/v0.5.0
+[approvals-beta]: https://github.com/automatiko-io/automatiko-approval-task/tree/v0.6.1
+[task-group]: https://github.com/openshift-pipelines/tekton-task-group/tree/39823f26be8f59504f242a45b9f2e791d4b36e1c
+[pipelines-in-pipelines]: https://github.com/tektoncd/experimental/tree/f60e1cd8ce22ed745e335f6f547bb9a44580dc7c/pipelines-in-pipelines
+[pipeline-in-pod]: https://github.com/tektoncd/experimental/tree/f60e1cd8ce22ed745e335f6f547bb9a44580dc7c/pipeline-in-pod
+[wait-task-beta]: https://github.com/tektoncd/pipeline/tree/a127323da31bcb933a04a6a1b5dbb6e0411e3dc1/test/custom-task-ctrls/wait-task-beta
 
 ## Code examples
 

@@ -2,13 +2,13 @@ MODULE   = $(shell env GO111MODULE=on $(GO) list -m)
 DATE    ?= $(shell date +%FT%T%z)
 VERSION ?= $(shell git describe --tags --always --dirty --match=v* 2> /dev/null || \
 			cat $(CURDIR)/.version 2> /dev/null || echo v0)
-PKGS     = $(or $(PKG),$(shell env GO111MODULE=on $(GO) list ./...))
+PKGS     = $(or $(PKG),$(shell env GO111MODULE=on $(GO) list ./... ))
 TESTPKGS = $(shell env GO111MODULE=on $(GO) list -f \
 			'{{ if or .TestGoFiles .XTestGoFiles }}{{ .ImportPath }}{{ end }}' \
 			$(PKGS))
 BIN      = $(CURDIR)/.bin
 
-GOLANGCI_VERSION = v1.42.0
+GOLANGCI_VERSION = v1.52.2
 
 GO           = go
 TIMEOUT_UNIT = 5m
@@ -65,12 +65,12 @@ KO = $(or ${KO_BIN},${KO_BIN},$(BIN)/ko)
 $(BIN)/ko: PACKAGE=github.com/google/ko
 
 .PHONY: apply
-apply: | $(KO) ; $(info $(M) ko apply -f config/) @ ## Apply config to the current cluster
-	$Q $(KO) apply -f config
+apply: | $(KO) ; $(info $(M) ko apply -R -f config/) @ ## Apply config to the current cluster
+	$Q $(KO) apply -R -f config
 
 .PHONY: resolve
-resolve: | $(KO) ; $(info $(M) ko resolve -f config/) @ ## Resolve config to the current cluster
-	$Q $(KO) resolve --push=false --oci-layout-path=$(BIN)/oci -f config
+resolve: | $(KO) ; $(info $(M) ko resolve -R -f config/) @ ## Resolve config to the current cluster
+	$Q $(KO) resolve --push=false --oci-layout-path=$(BIN)/oci -R -f config
 
 .PHONY: generated
 generated: | vendor ; $(info $(M) update generated files) ## Update generated files
@@ -169,6 +169,10 @@ $(BIN)/golangci-lint: ; $(info $(M) getting golangci-lint $(GOLANGCI_VERSION))
 .PHONY: golangci-lint
 golangci-lint: | $(GOLANGCILINT) ; $(info $(M) running golangci-lint…) @ ## Run golangci-lint
 	$Q $(GOLANGCILINT) run --modules-download-mode=vendor --max-issues-per-linter=0 --max-same-issues=0 --deadline 5m
+
+.PHONY: golangci-lint-check
+golangci-lint-check: | $(GOLANGCILINT) ; $(info $(M) Testing if golint has been done…) @ ## Run golangci-lint for build tests CI job
+	$Q $(GOLANGCILINT) run -j 1 --color=never
 
 GOIMPORTS = $(BIN)/goimports
 $(BIN)/goimports: PACKAGE=golang.org/x/tools/cmd/goimports

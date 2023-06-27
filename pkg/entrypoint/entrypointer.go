@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -29,8 +28,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tektoncd/pipeline/pkg/apis/config"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline"
-	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
+	"github.com/tektoncd/pipeline/pkg/result"
+	"github.com/tektoncd/pipeline/pkg/spire"
 	"github.com/tektoncd/pipeline/pkg/termination"
 	"go.uber.org/zap"
 )
@@ -80,6 +81,12 @@ type Entrypointer struct {
 	OnError string
 	// StepMetadataDir is the directory for a step where the step related metadata can be stored
 	StepMetadataDir string
+	// SpireWorkloadAPI connects to spire and does obtains SVID based on taskrun
+	SpireWorkloadAPI spire.EntrypointerAPIClient
+	// ResultsDirectory is the directory to find results, defaults to pipeline.DefaultResultPath
+	ResultsDirectory string
+	// ResultExtractionMethod is the method using which the controller extracts the results from the task pod.
+	ResultExtractionMethod string
 }
 
 // Waiter encapsulates waiting for files to exist.
@@ -105,7 +112,7 @@ func (e Entrypointer) Go() error {
 	prod, _ := zap.NewProduction()
 	logger := prod.Sugar()
 
-	output := []v1beta1.PipelineResourceResult{}
+	output := []result.RunResult{}
 	defer func() {
 		if wErr := termination.WriteMessage(e.TerminationPath, output); wErr != nil {
 			logger.Fatalf("Error while writing message: %s", wErr)
@@ -121,39 +128,40 @@ func (e Entrypointer) Go() error {
 			if !e.BreakpointOnFailure {
 				e.WritePostFile(e.PostFile, err)
 			}
-			output = append(output, v1beta1.PipelineResourceResult{
+			output = append(output, result.RunResult{
 				Key:        "StartedAt",
 				Value:      time.Now().Format(timeFormat),
-				ResultType: v1beta1.InternalTektonResultType,
+				ResultType: result.InternalTektonResultType,
 			})
 			return err
 		}
 	}
 
-	output = append(output, v1beta1.PipelineResourceResult{
+	output = append(output, result.RunResult{
 		Key:        "StartedAt",
 		Value:      time.Now().Format(timeFormat),
-		ResultType: v1beta1.InternalTektonResultType,
+		ResultType: result.InternalTektonResultType,
 	})
 
+	ctx := context.Background()
 	var err error
+
 	if e.Timeout != nil && *e.Timeout < time.Duration(0) {
 		err = fmt.Errorf("negative timeout specified")
 	}
 
 	if err == nil {
-		ctx := context.Background()
 		var cancel context.CancelFunc
 		if e.Timeout != nil && *e.Timeout != time.Duration(0) {
 			ctx, cancel = context.WithTimeout(ctx, *e.Timeout)
 			defer cancel()
 		}
 		err = e.Runner.Run(ctx, e.Command...)
-		if err == context.DeadlineExceeded {
-			output = append(output, v1beta1.PipelineResourceResult{
+		if errors.Is(err, context.DeadlineExceeded) {
+			output = append(output, result.RunResult{
 				Key:        "Reason",
 				Value:      "TimeoutExceeded",
-				ResultType: v1beta1.InternalTektonResultType,
+				ResultType: result.InternalTektonResultType,
 			})
 		}
 	}
@@ -165,10 +173,10 @@ func (e Entrypointer) Go() error {
 	case e.OnError == ContinueOnError && errors.As(err, &ee):
 		// with continue on error and an ExitError, write non-zero exit code and a post file
 		exitCode := strconv.Itoa(ee.ExitCode())
-		output = append(output, v1beta1.PipelineResourceResult{
+		output = append(output, result.RunResult{
 			Key:        "ExitCode",
 			Value:      exitCode,
-			ResultType: v1beta1.InternalTektonResultType,
+			ResultType: result.InternalTektonResultType,
 		})
 		e.WritePostFile(e.PostFile, nil)
 		e.WriteExitCodeFile(e.StepMetadataDir, exitCode)
@@ -184,7 +192,11 @@ func (e Entrypointer) Go() error {
 	// strings.Split(..) with an empty string returns an array that contains one element, an empty string.
 	// This creates an error when trying to open the result folder as a file.
 	if len(e.Results) >= 1 && e.Results[0] != "" {
-		if err := e.readResultsFromDisk(); err != nil {
+		resultPath := pipeline.DefaultResultPath
+		if e.ResultsDirectory != "" {
+			resultPath = e.ResultsDirectory
+		}
+		if err := e.readResultsFromDisk(ctx, resultPath); err != nil {
 			logger.Fatalf("Error while handling results: %s", err)
 		}
 	}
@@ -192,27 +204,35 @@ func (e Entrypointer) Go() error {
 	return err
 }
 
-func (e Entrypointer) readResultsFromDisk() error {
-	output := []v1beta1.PipelineResourceResult{}
+func (e Entrypointer) readResultsFromDisk(ctx context.Context, resultDir string) error {
+	output := []result.RunResult{}
 	for _, resultFile := range e.Results {
 		if resultFile == "" {
 			continue
 		}
-		fileContents, err := ioutil.ReadFile(filepath.Join(pipeline.DefaultResultPath, resultFile))
+		fileContents, err := os.ReadFile(filepath.Join(resultDir, resultFile))
 		if os.IsNotExist(err) {
 			continue
 		} else if err != nil {
 			return err
 		}
 		// if the file doesn't exist, ignore it
-		output = append(output, v1beta1.PipelineResourceResult{
+		output = append(output, result.RunResult{
 			Key:        resultFile,
 			Value:      string(fileContents),
-			ResultType: v1beta1.TaskRunResultType,
+			ResultType: result.TaskRunResultType,
 		})
 	}
+	if e.SpireWorkloadAPI != nil {
+		signed, err := e.SpireWorkloadAPI.Sign(ctx, output)
+		if err != nil {
+			return err
+		}
+		output = append(output, signed...)
+	}
+
 	// push output to termination path
-	if len(output) != 0 {
+	if e.ResultExtractionMethod == config.ResultExtractionMethodTerminationMessage && len(output) != 0 {
 		if err := termination.WriteMessage(e.TerminationPath, output); err != nil {
 			return err
 		}
@@ -222,7 +242,7 @@ func (e Entrypointer) readResultsFromDisk() error {
 
 // BreakpointExitCode reads the post file and returns the exit code it contains
 func (e Entrypointer) BreakpointExitCode(breakpointExitPostFile string) (int, error) {
-	exitCode, err := ioutil.ReadFile(breakpointExitPostFile)
+	exitCode, err := os.ReadFile(breakpointExitPostFile)
 	if os.IsNotExist(err) {
 		return 0, fmt.Errorf("breakpoint postfile %s not found", breakpointExitPostFile)
 	}

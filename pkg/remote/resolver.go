@@ -14,6 +14,9 @@ limitations under the License.
 package remote
 
 import (
+	"context"
+
+	v1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -26,8 +29,8 @@ type ResolvedObject struct {
 
 // Resolver defines a generic API to retrieve Tekton resources from remote locations. It allows 2 principle operations:
 //   - List:     retrieve a flat set of Tekton objects in this remote location
-//   - Get:      retrieves a specific object with the given Kind and name.
+//   - Get:      retrieves a specific object with the given Kind and name, and the refSource identifying where the resource came from.
 type Resolver interface {
-	List() ([]ResolvedObject, error)
-	Get(kind, name string) (runtime.Object, error)
+	List(ctx context.Context) ([]ResolvedObject, error)
+	Get(ctx context.Context, kind, name string) (runtime.Object, *v1.RefSource, error)
 }

@@ -1,3 +1,4 @@
+//go:build conformance || e2e || examples
 // +build conformance e2e examples
 
 /*
@@ -29,7 +30,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ghodss/yaml"
 	"github.com/tektoncd/pipeline/pkg/apis/config"
 	"github.com/tektoncd/pipeline/pkg/names"
 	corev1 "k8s.io/api/core/v1"
@@ -43,6 +43,7 @@ import (
 	knativetest "knative.dev/pkg/test"
 	"knative.dev/pkg/test/logging" // Mysteriously by k8s libs, or they fail to create `KubeClient`s from config. Apparently just importing it is enough. @_@ side effects @_@. https://github.com/kubernetes/client-go/issues/242
 	"knative.dev/pkg/test/logstream"
+	"sigs.k8s.io/yaml"
 )
 
 var initMetrics sync.Once
@@ -53,6 +54,7 @@ func init() {
 }
 
 func setup(ctx context.Context, t *testing.T, fn ...func(context.Context, *testing.T, *clients, string)) (*clients, string) {
+	t.Helper()
 	skipIfExcluded(t)
 
 	t.Helper()
@@ -100,11 +102,11 @@ func tearDown(ctx context.Context, t *testing.T, cs *clients, namespace string) 
 			t.Log(string(bs))
 		}
 		header(t, fmt.Sprintf("Dumping logs from Pods in the %s", namespace))
-		taskruns, err := cs.TaskRunClient.List(ctx, metav1.ListOptions{})
+		taskRuns, err := cs.V1TaskRunClient.List(ctx, metav1.ListOptions{})
 		if err != nil {
-			t.Errorf("Error getting TaskRun list %s", err)
+			t.Errorf("Error listing TaskRuns: %s", err)
 		}
-		for _, tr := range taskruns.Items {
+		for _, tr := range taskRuns.Items {
 			if tr.Status.PodName != "" {
 				CollectPodLogs(ctx, cs, tr.Status.PodName, namespace, t.Logf)
 			}
@@ -116,10 +118,13 @@ func tearDown(ctx context.Context, t *testing.T, cs *clients, namespace string) 
 		if err := cs.KubeClient.CoreV1().Namespaces().Delete(ctx, namespace, metav1.DeleteOptions{}); err != nil {
 			t.Errorf("Failed to delete namespace %s: %s", namespace, err)
 		}
+	} else {
+		t.Logf("Not deleting namespace %s", namespace)
 	}
 }
 
 func initializeLogsAndMetrics(t *testing.T) {
+	t.Helper()
 	initMetrics.Do(func() {
 		flag.Parse()
 		flag.Set("alsologtostderr", "true")
@@ -132,6 +137,7 @@ func initializeLogsAndMetrics(t *testing.T) {
 }
 
 func createNamespace(ctx context.Context, t *testing.T, namespace string, kubeClient kubernetes.Interface) {
+	t.Helper()
 	t.Logf("Create namespace %s to deploy to", namespace)
 	labels := map[string]string{
 		"tekton.dev/test-e2e": "true",
@@ -147,6 +153,7 @@ func createNamespace(ctx context.Context, t *testing.T, namespace string, kubeCl
 }
 
 func getDefaultSA(ctx context.Context, t *testing.T, kubeClient kubernetes.Interface, namespace string) string {
+	t.Helper()
 	configDefaultsCM, err := kubeClient.CoreV1().ConfigMaps(system.Namespace()).Get(ctx, config.GetDefaultsConfigName(), metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Failed to get ConfigMap `%s`: %s", config.GetDefaultsConfigName(), err)
@@ -159,6 +166,7 @@ func getDefaultSA(ctx context.Context, t *testing.T, kubeClient kubernetes.Inter
 }
 
 func verifyServiceAccountExistence(ctx context.Context, t *testing.T, namespace string, kubeClient kubernetes.Interface) {
+	t.Helper()
 	defaultSA := getDefaultSA(ctx, t, kubeClient, namespace)
 	t.Logf("Verify SA %q is created in namespace %q", defaultSA, namespace)
 
@@ -193,59 +201,57 @@ func getCRDYaml(ctx context.Context, cs *clients, ns string) ([]byte, error) {
 		output = append(output, bs...)
 	}
 
-	ps, err := cs.PipelineClient.List(ctx, metav1.ListOptions{})
+	v1beta1ClusterTasks, err := cs.V1beta1ClusterTaskClient.List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("could not get pipeline: %w", err)
+		return nil, fmt.Errorf("could not get v1beta1 clustertasks: %w", err)
 	}
-	for _, i := range ps.Items {
+	for _, i := range v1beta1ClusterTasks.Items {
+		i.SetManagedFields(nil)
 		printOrAdd(i)
 	}
 
-	prs, err := cs.PipelineResourceClient.List(ctx, metav1.ListOptions{})
+	v1Tasks, err := cs.V1TaskClient.List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("could not get pipelinerun resource: %w", err)
+		return nil, fmt.Errorf("could not get v1 tasks: %w", err)
 	}
-	for _, i := range prs.Items {
+	for _, i := range v1Tasks.Items {
+		i.SetManagedFields(nil)
 		printOrAdd(i)
 	}
 
-	prrs, err := cs.PipelineRunClient.List(ctx, metav1.ListOptions{})
+	v1TaskRuns, err := cs.V1TaskRunClient.List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("could not get pipelinerun: %w", err)
+		return nil, fmt.Errorf("could not get v1 taskruns: %w", err)
 	}
-	for _, i := range prrs.Items {
+	for _, i := range v1TaskRuns.Items {
+		i.SetManagedFields(nil)
 		printOrAdd(i)
 	}
 
-	ts, err := cs.TaskClient.List(ctx, metav1.ListOptions{})
+	v1Pipelines, err := cs.V1PipelineClient.List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("could not get tasks: %w", err)
+		return nil, fmt.Errorf("could not get v1 pipeline: %w", err)
 	}
-	for _, i := range ts.Items {
+	for _, i := range v1Pipelines.Items {
+		i.SetManagedFields(nil)
 		printOrAdd(i)
 	}
 
-	cts, err := cs.ClusterTaskClient.List(ctx, metav1.ListOptions{})
+	v1PipelineRuns, err := cs.V1PipelineRunClient.List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("could not get clustertasks: %w", err)
+		return nil, fmt.Errorf("could not get v1 pipelinerun: %w", err)
 	}
-	for _, i := range cts.Items {
+	for _, i := range v1PipelineRuns.Items {
+		i.SetManagedFields(nil)
 		printOrAdd(i)
 	}
 
-	trs, err := cs.TaskRunClient.List(ctx, metav1.ListOptions{})
+	v1beta1CustomRuns, err := cs.V1beta1CustomRunClient.List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("could not get taskruns: %w", err)
+		return nil, fmt.Errorf("could not get v1beta1 customruns: %w", err)
 	}
-	for _, i := range trs.Items {
-		printOrAdd(i)
-	}
-
-	rs, err := cs.RunClient.List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("could not get runs: %v", err)
-	}
-	for _, i := range rs.Items {
+	for _, i := range v1beta1CustomRuns.Items {
+		i.SetManagedFields(nil)
 		printOrAdd(i)
 	}
 
@@ -254,6 +260,11 @@ func getCRDYaml(ctx context.Context, cs *clients, ns string) ([]byte, error) {
 		return nil, fmt.Errorf("could not get pods: %w", err)
 	}
 	for _, i := range pods.Items {
+		// Ignore gitea pods for SCM resolver test
+		if strings.HasPrefix(i.Name, "gitea-") {
+			continue
+		}
+		i.SetManagedFields(nil)
 		printOrAdd(i)
 	}
 

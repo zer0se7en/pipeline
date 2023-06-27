@@ -8,7 +8,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,9 +20,14 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"sync"
 	"syscall"
 
 	"github.com/tektoncd/pipeline/pkg/entrypoint"
@@ -34,10 +39,33 @@ import (
 
 // realRunner actually runs commands.
 type realRunner struct {
-	signals chan os.Signal
+	sync.Mutex
+	signals       chan os.Signal
+	signalsClosed bool
+	stdoutPath    string
+	stderrPath    string
 }
 
 var _ entrypoint.Runner = (*realRunner)(nil)
+
+// close closes the signals channel which is used to receive system signals.
+func (rr *realRunner) close() {
+	rr.Lock()
+	defer rr.Unlock()
+	if rr.signals != nil && !rr.signalsClosed {
+		close(rr.signals)
+		rr.signalsClosed = true
+	}
+}
+
+// signal allows the caller to simulate the sending of a system signal.
+func (rr *realRunner) signal(signal os.Signal) {
+	rr.Lock()
+	defer rr.Unlock()
+	if rr.signals != nil && !rr.signalsClosed {
+		rr.signals <- signal
+	}
+}
 
 // Run executes the entrypoint.
 func (rr *realRunner) Run(ctx context.Context, args ...string) error {
@@ -50,13 +78,35 @@ func (rr *realRunner) Run(ctx context.Context, args ...string) error {
 	if rr.signals == nil {
 		rr.signals = make(chan os.Signal, 1)
 	}
-	defer close(rr.signals)
+	defer rr.close()
 	signal.Notify(rr.signals)
 	defer signal.Reset()
 
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+
+	// if a standard output file is specified
+	// create the log file and add to the std multi writer
+	if rr.stdoutPath != "" {
+		stdout, err := newStdLogWriter(rr.stdoutPath)
+		if err != nil {
+			return err
+		}
+		defer stdout.Close()
+		cmd.Stdout = io.MultiWriter(os.Stdout, stdout)
+	} else {
+		cmd.Stdout = os.Stdout
+	}
+	if rr.stderrPath != "" {
+		stderr, err := newStdLogWriter(rr.stderrPath)
+		if err != nil {
+			return err
+		}
+		defer stderr.Close()
+		cmd.Stderr = io.MultiWriter(os.Stderr, stderr)
+	} else {
+		cmd.Stderr = os.Stderr
+	}
+
 	// dedicated PID group used to forward signals to
 	// main process and all children
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -67,7 +117,7 @@ func (rr *realRunner) Run(ctx context.Context, args ...string) error {
 
 	// Start defined command
 	if err := cmd.Start(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return context.DeadlineExceeded
 		}
 		return err
@@ -85,11 +135,27 @@ func (rr *realRunner) Run(ctx context.Context, args ...string) error {
 
 	// Wait for command to exit
 	if err := cmd.Wait(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return context.DeadlineExceeded
 		}
 		return err
 	}
 
 	return nil
+}
+
+// newStdLogWriter create a new file writer that used for collecting std log
+// the file is opened with os.O_WRONLY|os.O_CREATE|os.O_APPEND, and will not
+// override any existing content in the path. This means that the same file can
+// be used for multiple streams if desired. note that close after use
+func newStdLogWriter(path string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(path), os.ModePerm); err != nil {
+		return nil, fmt.Errorf("error creating parent directory: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("error opening %s: %w", path, err)
+	}
+
+	return f, nil
 }

@@ -24,12 +24,13 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/tektoncd/pipeline/pkg/apis/config"
+	cfgtesting "github.com/tektoncd/pipeline/pkg/apis/config/testing"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/pod"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	"github.com/tektoncd/pipeline/test/diff"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	logtesting "knative.dev/pkg/logging/testing"
+	"knative.dev/pkg/apis"
 )
 
 func TestPipelineRunSpec_SetDefaults(t *testing.T) {
@@ -54,6 +55,57 @@ func TestPipelineRunSpec_SetDefaults(t *testing.T) {
 			want: &v1beta1.PipelineRunSpec{
 				ServiceAccountName: config.DefaultServiceAccountValue,
 				Timeout:            &metav1.Duration{Duration: 500 * time.Millisecond},
+			},
+		},
+		{
+			desc: "timeouts is nil",
+			prs:  &v1beta1.PipelineRunSpec{},
+			want: &v1beta1.PipelineRunSpec{
+				ServiceAccountName: config.DefaultServiceAccountValue,
+				Timeout:            &metav1.Duration{Duration: config.DefaultTimeoutMinutes * time.Minute},
+			},
+		},
+		{
+			desc: "timeouts is not nil",
+			prs: &v1beta1.PipelineRunSpec{
+				Timeouts: &v1beta1.TimeoutFields{},
+			},
+			want: &v1beta1.PipelineRunSpec{
+				ServiceAccountName: config.DefaultServiceAccountValue,
+				Timeouts: &v1beta1.TimeoutFields{
+					Pipeline: &metav1.Duration{Duration: config.DefaultTimeoutMinutes * time.Minute},
+				},
+			},
+		},
+		{
+			desc: "timeouts.pipeline is not nil",
+			prs: &v1beta1.PipelineRunSpec{
+				Timeouts: &v1beta1.TimeoutFields{
+					Pipeline: &metav1.Duration{Duration: (config.DefaultTimeoutMinutes + 1) * time.Minute},
+				},
+			},
+			want: &v1beta1.PipelineRunSpec{
+				ServiceAccountName: config.DefaultServiceAccountValue,
+				Timeouts: &v1beta1.TimeoutFields{
+					Pipeline: &metav1.Duration{Duration: (config.DefaultTimeoutMinutes + 1) * time.Minute},
+				},
+			},
+		},
+		{
+			desc: "timeouts.pipeline is nil with timeouts.tasks and timeouts.finally",
+			prs: &v1beta1.PipelineRunSpec{
+				Timeouts: &v1beta1.TimeoutFields{
+					Tasks:   &metav1.Duration{Duration: (config.DefaultTimeoutMinutes + 1) * time.Minute},
+					Finally: &metav1.Duration{Duration: (config.DefaultTimeoutMinutes + 1) * time.Minute},
+				},
+			},
+			want: &v1beta1.PipelineRunSpec{
+				ServiceAccountName: config.DefaultServiceAccountValue,
+				Timeouts: &v1beta1.TimeoutFields{
+					Pipeline: &metav1.Duration{Duration: (config.DefaultTimeoutMinutes) * time.Minute},
+					Tasks:    &metav1.Duration{Duration: (config.DefaultTimeoutMinutes + 1) * time.Minute},
+					Finally:  &metav1.Duration{Duration: (config.DefaultTimeoutMinutes + 1) * time.Minute},
+				},
 			},
 		},
 		{
@@ -107,10 +159,10 @@ func TestPipelineRunSpec_SetDefaults(t *testing.T) {
 
 func TestPipelineRunDefaulting(t *testing.T) {
 	tests := []struct {
-		name string
-		in   *v1beta1.PipelineRun
-		want *v1beta1.PipelineRun
-		wc   func(context.Context) context.Context
+		name     string
+		in       *v1beta1.PipelineRun
+		want     *v1beta1.PipelineRun
+		defaults map[string]string
 	}{{
 		name: "empty no context",
 		in:   &v1beta1.PipelineRun{},
@@ -157,17 +209,8 @@ func TestPipelineRunDefaulting(t *testing.T) {
 				Timeout:            &metav1.Duration{Duration: 5 * time.Minute},
 			},
 		},
-		wc: func(ctx context.Context) context.Context {
-			s := config.NewStore(logtesting.TestLogger(t))
-			s.OnConfigChanged(&corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: config.GetDefaultsConfigName(),
-				},
-				Data: map[string]string{
-					"default-timeout-minutes": "5",
-				},
-			})
-			return s.ToContext(ctx)
+		defaults: map[string]string{
+			"default-timeout-minutes": "5",
 		},
 	}, {
 		name: "PipelineRef default config context with sa",
@@ -183,18 +226,9 @@ func TestPipelineRunDefaulting(t *testing.T) {
 				ServiceAccountName: "tekton",
 			},
 		},
-		wc: func(ctx context.Context) context.Context {
-			s := config.NewStore(logtesting.TestLogger(t))
-			s.OnConfigChanged(&corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: config.GetDefaultsConfigName(),
-				},
-				Data: map[string]string{
-					"default-timeout-minutes": "5",
-					"default-service-account": "tekton",
-				},
-			})
-			return s.ToContext(ctx)
+		defaults: map[string]string{
+			"default-timeout-minutes": "5",
+			"default-service-account": "tekton",
 		},
 	}, {
 		name: "PipelineRef pod template is coming from default config pod template",
@@ -215,19 +249,10 @@ func TestPipelineRunDefaulting(t *testing.T) {
 				},
 			},
 		},
-		wc: func(ctx context.Context) context.Context {
-			s := config.NewStore(logtesting.TestLogger(t))
-			s.OnConfigChanged(&corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: config.GetDefaultsConfigName(),
-				},
-				Data: map[string]string{
-					"default-timeout-minutes": "5",
-					"default-service-account": "tekton",
-					"default-pod-template":    "nodeSelector: { 'label': 'value' }",
-				},
-			})
-			return s.ToContext(ctx)
+		defaults: map[string]string{
+			"default-timeout-minutes": "5",
+			"default-service-account": "tekton",
+			"default-pod-template":    "nodeSelector: { 'label': 'value' }",
 		},
 	}, {
 		name: "PipelineRef pod template nodeselector takes precedence over default config pod template nodeselector",
@@ -253,19 +278,10 @@ func TestPipelineRunDefaulting(t *testing.T) {
 				},
 			},
 		},
-		wc: func(ctx context.Context) context.Context {
-			s := config.NewStore(logtesting.TestLogger(t))
-			s.OnConfigChanged(&corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: config.GetDefaultsConfigName(),
-				},
-				Data: map[string]string{
-					"default-timeout-minutes": "5",
-					"default-service-account": "tekton",
-					"default-pod-template":    "nodeSelector: { 'label': 'value' }",
-				},
-			})
-			return s.ToContext(ctx)
+		defaults: map[string]string{
+			"default-timeout-minutes": "5",
+			"default-service-account": "tekton",
+			"default-pod-template":    "nodeSelector: { 'label': 'value' }",
 		},
 	}, {
 		name: "PipelineRef pod template merges non competing fields with default config pod template",
@@ -299,28 +315,126 @@ func TestPipelineRunDefaulting(t *testing.T) {
 				},
 			},
 		},
-		wc: func(ctx context.Context) context.Context {
-			s := config.NewStore(logtesting.TestLogger(t))
-			s.OnConfigChanged(&corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: config.GetDefaultsConfigName(),
+		defaults: map[string]string{
+			"default-timeout-minutes": "5",
+			"default-service-account": "tekton",
+			"default-pod-template":    "nodeSelector: { 'label': 'value' }\nhostNetwork: true",
+		},
+	}, {
+		name: "PipelineRef uses default resolver",
+		in:   &v1beta1.PipelineRun{Spec: v1beta1.PipelineRunSpec{PipelineRef: &v1beta1.PipelineRef{}}},
+		want: &v1beta1.PipelineRun{
+			Spec: v1beta1.PipelineRunSpec{
+				ServiceAccountName: config.DefaultServiceAccountValue,
+				Timeout:            &metav1.Duration{Duration: config.DefaultTimeoutMinutes * time.Minute},
+				PipelineRef: &v1beta1.PipelineRef{
+					ResolverRef: v1beta1.ResolverRef{
+						Resolver: "git",
+					},
 				},
-				Data: map[string]string{
-					"default-timeout-minutes": "5",
-					"default-service-account": "tekton",
-					"default-pod-template":    "nodeSelector: { 'label': 'value' }\nhostNetwork: true",
+			},
+		},
+		defaults: map[string]string{
+			"default-resolver-type": "git",
+		},
+	}, {
+		name: "PipelineRef user-provided resolver overwrites default resolver",
+		in: &v1beta1.PipelineRun{
+			Spec: v1beta1.PipelineRunSpec{
+				PipelineRef: &v1beta1.PipelineRef{
+					ResolverRef: v1beta1.ResolverRef{
+						Resolver: "hub",
+					},
 				},
-			})
-			return s.ToContext(ctx)
+			},
+		},
+		want: &v1beta1.PipelineRun{
+			Spec: v1beta1.PipelineRunSpec{
+				ServiceAccountName: config.DefaultServiceAccountValue,
+				Timeout:            &metav1.Duration{Duration: config.DefaultTimeoutMinutes * time.Minute},
+				PipelineRef: &v1beta1.PipelineRef{
+					ResolverRef: v1beta1.ResolverRef{
+						Resolver: "hub",
+					},
+				},
+			},
+		},
+		defaults: map[string]string{
+			"default-resolver-type": "git",
+		},
+	}, {
+		name: "Reserved Tekton annotations are not filtered on update",
+		in: &v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{"chains.tekton.dev/signed": "true", "foo": "bar"},
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				PipelineRef: &v1beta1.PipelineRef{
+					Name: "foo",
+				},
+			},
+		},
+		want: &v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{"chains.tekton.dev/signed": "true", "foo": "bar"},
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				ServiceAccountName: config.DefaultServiceAccountValue,
+				Timeout:            &metav1.Duration{Duration: config.DefaultTimeoutMinutes * time.Minute},
+				PipelineRef: &v1beta1.PipelineRef{
+					Name: "foo",
+				},
+			},
 		},
 	}}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			ctx := cfgtesting.SetDefaults(context.Background(), t, tc.defaults)
 			got := tc.in
-			ctx := context.Background()
-			if tc.wc != nil {
-				ctx = tc.wc(ctx)
+			got.SetDefaults(ctx)
+			if !cmp.Equal(got, tc.want, ignoreUnexportedResources) {
+				d := cmp.Diff(got, tc.want, ignoreUnexportedResources)
+				t.Errorf("SetDefaults %s", diff.PrintWantGot(d))
 			}
+		})
+	}
+}
+
+func TestPipelineRunDefaultingOnCreate(t *testing.T) {
+	tests := []struct {
+		name     string
+		in       *v1beta1.PipelineRun
+		want     *v1beta1.PipelineRun
+		defaults map[string]string
+	}{{
+		name: "Reserved Tekton annotations are filtered on create",
+		in: &v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{"chains.tekton.dev/signed": "true", "results.tekton.dev/hello": "world", "tekton.dev/foo": "bar", "foo": "bar"},
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				PipelineRef: &v1beta1.PipelineRef{
+					Name: "foo",
+				},
+			},
+		},
+		want: &v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{"tekton.dev/foo": "bar", "foo": "bar"},
+			},
+			Spec: v1beta1.PipelineRunSpec{
+				ServiceAccountName: config.DefaultServiceAccountValue,
+				Timeout:            &metav1.Duration{Duration: config.DefaultTimeoutMinutes * time.Minute},
+				PipelineRef: &v1beta1.PipelineRef{
+					Name: "foo",
+				},
+			},
+		},
+	}}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := apis.WithinCreate(cfgtesting.SetDefaults(context.Background(), t, tc.defaults))
+			got := tc.in
 			got.SetDefaults(ctx)
 			if !cmp.Equal(got, tc.want, ignoreUnexportedResources) {
 				d := cmp.Diff(got, tc.want, ignoreUnexportedResources)

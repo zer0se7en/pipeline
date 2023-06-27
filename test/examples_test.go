@@ -1,3 +1,4 @@
+//go:build examples
 // +build examples
 
 /*
@@ -22,7 +23,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,7 +36,7 @@ import (
 
 var (
 	defaultKoDockerRepoRE = regexp.MustCompile("gcr.io/christiewilson-catfactory")
-	defaultNamespaceRE    = regexp.MustCompile("namespace: default")
+	imagesMappingRE       = getImagesMappingRE()
 )
 
 // getCreatedTektonCRD parses output of an external ko invocation provided as
@@ -51,15 +51,28 @@ func getCreatedTektonCRD(input []byte, kind string) (string, error) {
 }
 
 func waitValidatePipelineRunDone(ctx context.Context, t *testing.T, c *clients, pipelineRunName string) {
-	if err := WaitForPipelineRunState(ctx, c, pipelineRunName, timeout, Succeed(pipelineRunName), pipelineRunName); err != nil {
+	if err := WaitForPipelineRunState(ctx, c, pipelineRunName, timeout, Succeed(pipelineRunName), pipelineRunName, v1beta1Version); err != nil {
 		t.Fatalf("Failed waiting for pipeline run done: %v", err)
+	}
+}
+
+func waitValidateV1PipelineRunDone(ctx context.Context, t *testing.T, c *clients, pipelineRunName string) {
+	if err := WaitForPipelineRunState(ctx, c, pipelineRunName, timeout, Succeed(pipelineRunName), pipelineRunName, v1Version); err != nil {
+		t.Fatalf("Failed waiting for V1 pipeline run done: %v", err)
 	}
 }
 
 func waitValidateTaskRunDone(ctx context.Context, t *testing.T, c *clients, taskRunName string) {
 	// Per test basis
-	if err := WaitForTaskRunState(ctx, c, taskRunName, Succeed(taskRunName), taskRunName); err != nil {
+	if err := WaitForTaskRunState(ctx, c, taskRunName, Succeed(taskRunName), taskRunName, v1beta1Version); err != nil {
 		t.Fatalf("Failed waiting for task run done: %v", err)
+	}
+}
+
+func waitValidateV1TaskRunDone(ctx context.Context, t *testing.T, c *clients, taskRunName string) {
+	// Per test basis
+	if err := WaitForTaskRunState(ctx, c, taskRunName, Succeed(taskRunName), taskRunName, v1Version); err != nil {
+		t.Fatalf("Failed waiting for V1 task run done: %v", err)
 	}
 }
 
@@ -76,8 +89,7 @@ func substituteEnv(input []byte, namespace string) ([]byte, error) {
 	}
 	output := defaultKoDockerRepoRE.ReplaceAll(input, []byte(val))
 
-	// Strip any "namespace: default"s, all resources will be created in
-	// the test namespace using `ko create -n`
+	// Replace any "namespace: default"s with the test namespace.
 	output = defaultNamespaceRE.ReplaceAll(output, []byte("namespace: "+namespace))
 
 	// Replace image names to arch specific ones, where it's necessary
@@ -90,13 +102,7 @@ func substituteEnv(input []byte, namespace string) ([]byte, error) {
 // koCreate wraps the ko binary and invokes `ko create` for input within
 // namespace
 func koCreate(input []byte, namespace string) ([]byte, error) {
-	cmd := exec.Command("ko", "create", "--platform", "linux/"+getTestArch(), "-n", namespace, "-f", "-")
-	cmd.Stdin = bytes.NewReader(input)
-	return cmd.CombinedOutput()
-}
-
-func kubectlCreate(input []byte, namespace string) ([]byte, error) {
-	cmd := exec.Command("kubectl", "create", "-n", namespace, "-f", "-")
+	cmd := exec.Command("ko", "create", "--platform", "linux/"+getTestArch(), "-f", "-", "--", "--namespace", namespace)
 	cmd.Stdin = bytes.NewReader(input)
 	return cmd.CombinedOutput()
 }
@@ -107,7 +113,7 @@ func kubectlCreate(input []byte, namespace string) ([]byte, error) {
 // conflicts during test
 func deleteClusterTask(ctx context.Context, t *testing.T, c *clients, name string) {
 	t.Logf("Deleting clustertask %s", name)
-	if err := c.ClusterTaskClient.Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+	if err := c.V1beta1ClusterTaskClient.Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
 		t.Fatalf("Failed to delete clustertask: %v", err)
 	}
 }
@@ -129,7 +135,7 @@ func exampleTest(path string, waitValidateFunc waitFunc, createFunc createFunc, 
 		knativetest.CleanupOnInterrupt(func() { tearDown(ctx, t, c, namespace) }, t.Logf)
 		defer tearDown(ctx, t, c, namespace)
 
-		inputExample, err := ioutil.ReadFile(path)
+		inputExample, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("Error reading file: %v", err)
 		}
@@ -244,13 +250,65 @@ func testYamls(t *testing.T, baseDir string, createFunc createFunc, filter pathF
 		path := path // capture range variable
 		testName := extractTestName(baseDir, path)
 		waitValidateFunc := waitValidatePipelineRunDone
+		if strings.Contains(path, "/v1/") {
+			waitValidateFunc = waitValidateV1PipelineRunDone
+		}
 		kind := "pipelinerun"
 
 		if strings.Contains(path, "/taskruns/") {
 			waitValidateFunc = waitValidateTaskRunDone
+			if strings.Contains(path, "/v1/") {
+				waitValidateFunc = waitValidateV1TaskRunDone
+			}
 			kind = "taskrun"
 		}
 
 		t.Run(testName, exampleTest(path, waitValidateFunc, createFunc, kind))
 	}
+}
+
+// getImagesMappingRE generates the map ready to search and replace image names with regexp for examples files.
+// search is done using "image: <name>" pattern.
+func getImagesMappingRE() map[*regexp.Regexp][]byte {
+	imageNamesMapping := imageNamesMapping()
+	imageMappingRE := make(map[*regexp.Regexp][]byte, len(imageNamesMapping))
+
+	for existingImage, archSpecificImage := range imageNamesMapping {
+		imageMappingRE[regexp.MustCompile("(?im)image: "+existingImage+"$")] = []byte("image: " + archSpecificImage)
+		imageMappingRE[regexp.MustCompile("(?im)default: "+existingImage+"$")] = []byte("default: " + archSpecificImage)
+	}
+
+	return imageMappingRE
+}
+
+// imageNamesMapping provides mapping between image name in the examples yaml files and desired image name for specific arch.
+// by default empty map is returned.
+func imageNamesMapping() map[string]string {
+	switch getTestArch() {
+	case "s390x":
+		return map[string]string{
+			"registry":                              getTestImage(registryImage),
+			"node":                                  "node:alpine3.11",
+			"gcr.io/cloud-builders/git":             "alpine/git:latest",
+			"docker:dind":                           "ibmcom/docker-s390x:20.10",
+			"docker":                                "docker:18.06.3",
+			"mikefarah/yq:3":                        "danielxlee/yq:2.4.0",
+			"stedolan/jq":                           "ibmcom/jq-s390x:latest",
+			"amd64/ubuntu":                          "s390x/ubuntu",
+			"gcr.io/kaniko-project/executor:v1.3.0": getTestImage(kanikoImage),
+		}
+	case "ppc64le":
+		return map[string]string{
+			"registry":                              getTestImage(registryImage),
+			"node":                                  "node:alpine3.11",
+			"gcr.io/cloud-builders/git":             "alpine/git:latest",
+			"docker:dind":                           "ibmcom/docker-ppc64le:19.03-dind",
+			"docker":                                "docker:18.06.3",
+			"mikefarah/yq:3":                        "danielxlee/yq:2.4.0",
+			"stedolan/jq":                           "ibmcom/jq-ppc64le:latest",
+			"gcr.io/kaniko-project/executor:v1.3.0": getTestImage(kanikoImage),
+		}
+	}
+
+	return make(map[string]string)
 }

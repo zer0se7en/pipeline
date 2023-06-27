@@ -22,20 +22,20 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/tektoncd/pipeline/pkg/apis/config"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/pod"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	"github.com/tektoncd/pipeline/test/diff"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clock "k8s.io/utils/clock/testing"
 	"knative.dev/pkg/apis"
+	v1 "knative.dev/pkg/apis/duck/v1"
 )
 
 var now = time.Date(2022, time.January, 1, 0, 0, 0, 0, time.UTC)
-
-type testClock struct{}
-
-func (tc testClock) Now() time.Time                  { return now }
-func (tc testClock) Since(t time.Time) time.Duration { return now.Sub(t) }
+var testClock = clock.NewFakePassiveClock(now)
 
 func TestPipelineRunStatusConditions(t *testing.T) {
 	p := &v1beta1.PipelineRun{}
@@ -77,15 +77,7 @@ func TestInitializePipelineRunConditions(t *testing.T) {
 			Namespace: "test-ns",
 		},
 	}
-	p.Status.InitializeConditions(testClock{})
-
-	if p.Status.TaskRuns == nil {
-		t.Fatalf("PipelineRun TaskRun status not initialized correctly")
-	}
-
-	if p.Status.Runs == nil {
-		t.Fatalf("PipelineRun Run status not initialized correctly")
-	}
+	p.Status.InitializeConditions(testClock)
 
 	if p.Status.StartTime.IsZero() {
 		t.Fatalf("PipelineRun StartTime not initialized correctly")
@@ -95,8 +87,6 @@ func TestInitializePipelineRunConditions(t *testing.T) {
 	if condition.Reason != v1beta1.PipelineRunReasonStarted.String() {
 		t.Fatalf("PipelineRun initialize reason should be %s, got %s instead", v1beta1.PipelineRunReasonStarted.String(), condition.Reason)
 	}
-	p.Status.TaskRuns["fooTask"] = &v1beta1.PipelineRunTaskRunStatus{}
-	p.Status.Runs["bahTask"] = &v1beta1.PipelineRunRunStatus{}
 
 	// Change the reason before we initialize again
 	p.Status.SetCondition(&apis.Condition{
@@ -106,13 +96,7 @@ func TestInitializePipelineRunConditions(t *testing.T) {
 		Message: "hello",
 	})
 
-	p.Status.InitializeConditions(testClock{})
-	if len(p.Status.TaskRuns) != 1 {
-		t.Fatalf("PipelineRun TaskRun status getting reset")
-	}
-	if len(p.Status.Runs) != 1 {
-		t.Fatalf("PipelineRun Run status getting reset")
-	}
+	p.Status.InitializeConditions(testClock)
 
 	newCondition := p.Status.GetCondition(apis.ConditionSucceeded)
 	if newCondition.Reason != "not just started" {
@@ -235,6 +219,179 @@ func TestPipelineRunHasStarted(t *testing.T) {
 	}
 }
 
+func TestPipelineRunIsTimeoutConditionSet(t *testing.T) {
+	tcs := []struct {
+		name      string
+		condition apis.Condition
+		want      bool
+	}{{
+		name: "should return true when reason is timeout",
+		condition: apis.Condition{
+			Type:   apis.ConditionSucceeded,
+			Status: corev1.ConditionFalse,
+			Reason: v1beta1.PipelineRunReasonTimedOut.String(),
+		},
+		want: true,
+	}, {
+		name: "should return false if status is not false",
+		condition: apis.Condition{
+			Type:   apis.ConditionSucceeded,
+			Status: corev1.ConditionUnknown,
+			Reason: v1beta1.PipelineRunReasonTimedOut.String(),
+		},
+		want: false,
+	}, {
+		name: "should return false if the reason is not timeout",
+		condition: apis.Condition{
+			Type:   apis.ConditionSucceeded,
+			Status: corev1.ConditionFalse,
+			Reason: v1beta1.PipelineRunReasonFailed.String(),
+		},
+		want: false,
+	}}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := &v1beta1.PipelineRun{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-pipeline-run"},
+				Status: v1beta1.PipelineRunStatus{
+					Status: v1.Status{
+						Conditions: v1.Conditions{tc.condition},
+					},
+				},
+			}
+			if got := pr.IsTimeoutConditionSet(); got != tc.want {
+				t.Errorf("pr.IsTimeoutConditionSet() (-want, +got):\n- %t\n+ %t", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestPipelineRunSetTimeoutCondition(t *testing.T) {
+	ctx := config.ToContext(context.Background(), &config.Config{
+		Defaults: &config.Defaults{
+			DefaultTimeoutMinutes: 120,
+		},
+	})
+
+	tcs := []struct {
+		name        string
+		pipelineRun *v1beta1.PipelineRun
+		want        *apis.Condition
+	}{{
+		name:        "set condition to default timeout",
+		pipelineRun: &v1beta1.PipelineRun{ObjectMeta: metav1.ObjectMeta{Name: "test-pipeline-run"}},
+		want: &apis.Condition{
+			Type:    "Succeeded",
+			Status:  "False",
+			Reason:  "PipelineRunTimeout",
+			Message: `PipelineRun "test-pipeline-run" failed to finish within "2h0m0s"`,
+		},
+	}, {
+		name: "set condition to spec.timeout value",
+		pipelineRun: &v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-pipeline-run"},
+			Spec: v1beta1.PipelineRunSpec{
+				Timeout: &metav1.Duration{Duration: time.Hour},
+			},
+		},
+		want: &apis.Condition{
+			Type:    "Succeeded",
+			Status:  "False",
+			Reason:  "PipelineRunTimeout",
+			Message: `PipelineRun "test-pipeline-run" failed to finish within "1h0m0s"`,
+		},
+	}, {
+		name: "set condition to spec.timeouts.pipeline value",
+		pipelineRun: &v1beta1.PipelineRun{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-pipeline-run"},
+			Spec: v1beta1.PipelineRunSpec{
+				Timeouts: &v1beta1.TimeoutFields{
+					Pipeline: &metav1.Duration{Duration: time.Hour},
+				},
+			},
+		},
+		want: &apis.Condition{
+			Type:    "Succeeded",
+			Status:  "False",
+			Reason:  "PipelineRunTimeout",
+			Message: `PipelineRun "test-pipeline-run" failed to finish within "1h0m0s"`,
+		},
+	}}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.pipelineRun.SetTimeoutCondition(ctx)
+
+			got := tc.pipelineRun.Status.GetCondition(apis.ConditionSucceeded)
+			if d := cmp.Diff(tc.want, got, cmpopts.IgnoreFields(apis.Condition{}, "LastTransitionTime")); d != "" {
+				t.Errorf("Unexpected PipelineRun condition: %v", diff.PrintWantGot(d))
+			}
+		})
+	}
+}
+
+func TestPipelineRunHasTimedOutForALongTime(t *testing.T) {
+	tcs := []struct {
+		name      string
+		timeout   time.Duration
+		starttime time.Time
+		expected  bool
+	}{{
+		name:      "has timed out for a long time",
+		timeout:   1 * time.Hour,
+		starttime: now.Add(-2 * time.Hour),
+		expected:  true,
+	}, {
+		name:      "has timed out for not a long time",
+		timeout:   1 * time.Hour,
+		starttime: now.Add(-90 * time.Minute),
+		expected:  false,
+	}, {
+		name:      "has not timed out",
+		timeout:   1 * time.Hour,
+		starttime: now.Add(-30 * time.Minute),
+		expected:  false,
+	}, {
+		name:      "has no timeout specified",
+		timeout:   0 * time.Second,
+		starttime: now.Add(-24 * time.Hour),
+		expected:  false,
+	}}
+
+	for _, tc := range tcs {
+		t.Run("pipeline.timeout "+tc.name, func(t *testing.T) {
+			pr := &v1beta1.PipelineRun{
+				ObjectMeta: metav1.ObjectMeta{Name: "foo"},
+				Spec: v1beta1.PipelineRunSpec{
+					Timeout: &metav1.Duration{Duration: tc.timeout},
+				},
+				Status: v1beta1.PipelineRunStatus{PipelineRunStatusFields: v1beta1.PipelineRunStatusFields{
+					StartTime: &metav1.Time{Time: tc.starttime},
+				}},
+			}
+			if pr.HasTimedOutForALongTime(context.Background(), testClock) != tc.expected {
+				t.Errorf("Expected HasTimedOut to be %t when using pipeline.timeout", tc.expected)
+			}
+		})
+		t.Run("pipeline.timeouts.pipeline "+tc.name, func(t *testing.T) {
+			pr := &v1beta1.PipelineRun{
+				ObjectMeta: metav1.ObjectMeta{Name: "foo"},
+				Spec: v1beta1.PipelineRunSpec{
+					Timeouts: &v1beta1.TimeoutFields{Pipeline: &metav1.Duration{Duration: tc.timeout}},
+				},
+				Status: v1beta1.PipelineRunStatus{PipelineRunStatusFields: v1beta1.PipelineRunStatusFields{
+					StartTime: &metav1.Time{Time: tc.starttime},
+				}},
+			}
+
+			if pr.HasTimedOutForALongTime(context.Background(), testClock) != tc.expected {
+				t.Errorf("Expected HasTimedOut to be %t when using pipeline.timeouts.pipeline", tc.expected)
+			}
+		})
+	}
+}
+
 func TestPipelineRunHasTimedOut(t *testing.T) {
 	tcs := []struct {
 		name      string
@@ -270,7 +427,7 @@ func TestPipelineRunHasTimedOut(t *testing.T) {
 					StartTime: &metav1.Time{Time: tc.starttime},
 				}},
 			}
-			if pr.HasTimedOut(context.Background(), testClock{}) != tc.expected {
+			if pr.HasTimedOut(context.Background(), testClock) != tc.expected {
 				t.Errorf("Expected HasTimedOut to be %t when using pipeline.timeout", tc.expected)
 			}
 		})
@@ -285,7 +442,38 @@ func TestPipelineRunHasTimedOut(t *testing.T) {
 				}},
 			}
 
-			if pr.HasTimedOut(context.Background(), testClock{}) != tc.expected {
+			if pr.HasTimedOut(context.Background(), testClock) != tc.expected {
+				t.Errorf("Expected HasTimedOut to be %t when using pipeline.timeouts.pipeline", tc.expected)
+			}
+		})
+		t.Run("pipeline.timeouts.tasks "+tc.name, func(t *testing.T) {
+			pr := &v1beta1.PipelineRun{
+				ObjectMeta: metav1.ObjectMeta{Name: "foo"},
+				Spec: v1beta1.PipelineRunSpec{
+					Timeouts: &v1beta1.TimeoutFields{Tasks: &metav1.Duration{Duration: tc.timeout}},
+				},
+				Status: v1beta1.PipelineRunStatus{PipelineRunStatusFields: v1beta1.PipelineRunStatusFields{
+					StartTime: &metav1.Time{Time: tc.starttime},
+				}},
+			}
+
+			if pr.HaveTasksTimedOut(context.Background(), testClock) != tc.expected {
+				t.Errorf("Expected HasTimedOut to be %t when using pipeline.timeouts.pipeline", tc.expected)
+			}
+		})
+		t.Run("pipeline.timeouts.finally "+tc.name, func(t *testing.T) {
+			pr := &v1beta1.PipelineRun{
+				ObjectMeta: metav1.ObjectMeta{Name: "foo"},
+				Spec: v1beta1.PipelineRunSpec{
+					Timeouts: &v1beta1.TimeoutFields{Finally: &metav1.Duration{Duration: tc.timeout}},
+				},
+				Status: v1beta1.PipelineRunStatus{PipelineRunStatusFields: v1beta1.PipelineRunStatusFields{
+					StartTime:        &metav1.Time{Time: tc.starttime},
+					FinallyStartTime: &metav1.Time{Time: tc.starttime},
+				}},
+			}
+
+			if pr.HasFinallyTimedOut(context.Background(), testClock) != tc.expected {
 				t.Errorf("Expected HasTimedOut to be %t when using pipeline.timeouts.pipeline", tc.expected)
 			}
 		})
@@ -309,7 +497,6 @@ func TestPipelineRunTimeouts(t *testing.T) {
 		expectedTasksTimeout:   &metav1.Duration{Duration: 10 * time.Minute},
 		expectedFinallyTimeout: &metav1.Duration{Duration: 50 * time.Minute},
 	}, {
-
 		name:                   "pipeline and finally timeout set",
 		timeouts:               &v1beta1.TimeoutFields{Pipeline: &metav1.Duration{Duration: time.Hour}, Finally: &metav1.Duration{Duration: 10 * time.Minute}},
 		expectedTasksTimeout:   &metav1.Duration{Duration: 50 * time.Minute},
@@ -353,61 +540,6 @@ func TestPipelineRunTimeouts(t *testing.T) {
 	}
 }
 
-func TestPipelineRunGetServiceAccountName(t *testing.T) {
-	for _, tt := range []struct {
-		name    string
-		pr      *v1beta1.PipelineRun
-		saNames map[string]string
-	}{
-		{
-			name: "default SA",
-			pr: &v1beta1.PipelineRun{
-				ObjectMeta: metav1.ObjectMeta{Name: "pr"},
-				Spec: v1beta1.PipelineRunSpec{
-					PipelineRef:        &v1beta1.PipelineRef{Name: "prs"},
-					ServiceAccountName: "defaultSA",
-					ServiceAccountNames: []v1beta1.PipelineRunSpecServiceAccountName{{
-						TaskName: "taskName", ServiceAccountName: "taskSA",
-					}},
-				},
-			},
-			saNames: map[string]string{
-				"unknown":  "defaultSA",
-				"taskName": "taskSA",
-			},
-		},
-		{
-			name: "mixed default SA",
-			pr: &v1beta1.PipelineRun{
-				ObjectMeta: metav1.ObjectMeta{Name: "pr"},
-				Spec: v1beta1.PipelineRunSpec{
-					PipelineRef:        &v1beta1.PipelineRef{Name: "prs"},
-					ServiceAccountName: "defaultSA",
-					ServiceAccountNames: []v1beta1.PipelineRunSpecServiceAccountName{{
-						TaskName: "task1", ServiceAccountName: "task1SA",
-					}, {
-						TaskName: "task2", ServiceAccountName: "task2SA",
-					}},
-				},
-			},
-			saNames: map[string]string{
-				"unknown": "defaultSA",
-				"task1":   "task1SA",
-				"task2":   "task2SA",
-			},
-		},
-	} {
-		for taskName, expected := range tt.saNames {
-			t.Run(tt.name, func(t *testing.T) {
-				sa := tt.pr.GetServiceAccountName(taskName)
-				if expected != sa {
-					t.Errorf("wrong service account: got: %v, want: %v", sa, expected)
-				}
-			})
-		}
-	}
-}
-
 func TestPipelineRunGetPodSpecSABackcompatibility(t *testing.T) {
 	for _, tt := range []struct {
 		name        string
@@ -421,9 +553,6 @@ func TestPipelineRunGetPodSpecSABackcompatibility(t *testing.T) {
 				Spec: v1beta1.PipelineRunSpec{
 					PipelineRef:        &v1beta1.PipelineRef{Name: "prs"},
 					ServiceAccountName: "defaultSA",
-					ServiceAccountNames: []v1beta1.PipelineRunSpecServiceAccountName{{
-						TaskName: "taskName", ServiceAccountName: "taskSA",
-					}},
 					TaskRunSpecs: []v1beta1.PipelineTaskRunSpec{{
 						PipelineTaskName:       "taskName",
 						TaskServiceAccountName: "newTaskSA",
@@ -528,6 +657,79 @@ func TestPipelineRunGetPodSpec(t *testing.T) {
 				}
 				if values[1] != s.TaskServiceAccountName {
 					t.Errorf("wrong service account: got: %v, want: %v", s.TaskServiceAccountName, values[1])
+				}
+			})
+		}
+	}
+}
+
+func TestPipelineRun_GetTaskRunSpec(t *testing.T) {
+	user := int64(1000)
+	group := int64(2000)
+	fsGroup := int64(3000)
+	for _, tt := range []struct {
+		name                 string
+		pr                   *v1beta1.PipelineRun
+		expectedPodTemplates map[string]*pod.PodTemplate
+	}{
+		{
+			name: "pipelineRun Spec podTemplate and taskRunSpec pipelineTask podTemplate",
+			pr: &v1beta1.PipelineRun{
+				ObjectMeta: metav1.ObjectMeta{Name: "pr"},
+				Spec: v1beta1.PipelineRunSpec{
+					PodTemplate: &pod.Template{
+						SecurityContext: &corev1.PodSecurityContext{
+							RunAsUser:  &user,
+							RunAsGroup: &group,
+							FSGroup:    &fsGroup,
+						},
+					},
+					PipelineRef:        &v1beta1.PipelineRef{Name: "prs"},
+					ServiceAccountName: "defaultSA",
+					TaskRunSpecs: []v1beta1.PipelineTaskRunSpec{{
+						PipelineTaskName:       "task-1",
+						TaskServiceAccountName: "task-1-service-account",
+						TaskPodTemplate: &pod.Template{
+							NodeSelector: map[string]string{
+								"diskType": "ssd",
+							},
+						},
+					}, {
+						PipelineTaskName:       "task-2",
+						TaskServiceAccountName: "task-2-service-account",
+						TaskPodTemplate: &pod.Template{
+							SchedulerName: "task-2-schedule",
+						},
+					}},
+				},
+			},
+			expectedPodTemplates: map[string]*pod.PodTemplate{
+				"task-1": {
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsUser:  &user,
+						RunAsGroup: &group,
+						FSGroup:    &fsGroup,
+					},
+					NodeSelector: map[string]string{
+						"diskType": "ssd",
+					},
+				},
+				"task-2": {
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsUser:  &user,
+						RunAsGroup: &group,
+						FSGroup:    &fsGroup,
+					},
+					SchedulerName: "task-2-schedule",
+				},
+			},
+		},
+	} {
+		for taskName := range tt.expectedPodTemplates {
+			t.Run(tt.name, func(t *testing.T) {
+				s := tt.pr.GetTaskRunSpec(taskName)
+				if d := cmp.Diff(tt.expectedPodTemplates[taskName], s.TaskPodTemplate); d != "" {
+					t.Error(diff.PrintWantGot(d))
 				}
 			})
 		}

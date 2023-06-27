@@ -17,11 +17,11 @@ To set up your environment and begin working on our code, see [Developing for Te
   - [Adopting good development principles](https://github.com/tektoncd/community/blob/main/standards.md#principles)
   - [Writing useful commit messages](https://github.com/tektoncd/community/blob/main/standards.md#commit-messages)
 - [Contacting other contributors](https://github.com/tektoncd/community/blob/main/contact.md)
-- [Tekton development processes](https://github.com/tektoncd/community/blob/main/process.md), including:
-  - [Finding things to work on](https://github.com/tektoncd/community/blob/main/process.md#finding-something-to-work-on)
-  - [Proposing new features](https://github.com/tektoncd/community/blob/main/process.md#proposing-features)
-  - [Performing code reviews](https://github.com/tektoncd/community/blob/main/process.md#reviews)
-  - [Becoming a code owner](https://github.com/tektoncd/community/blob/main/process.md#owners)
+- [Tekton development processes](https://github.com/tektoncd/community/tree/main/process#readme), including:
+  - [Finding things to work on](https://github.com/tektoncd/community/tree/main/process#finding-something-to-work-on)
+  - [Proposing new features](https://github.com/tektoncd/community/tree/main/process#proposing-features)
+  - [Performing code reviews](https://github.com/tektoncd/community/tree/main/process#reviews)
+  - [Becoming a community member and maintainer](https://github.com/tektoncd/community/blob/main/process/contributor-ladder.md)
 - [Making changes to the Tekton API](api_compatibility_policy.md#approving-api-changes)
 - [Understanding the Tekton automation infrastructure](https://github.com/tektoncd/plumbing)
 
@@ -36,7 +36,7 @@ For support in contributing to specific areas, contact the relevant [Tekton Pipe
 ## Contributing to Tekton documentation
 
 If you want to contribute to Tekton documentation, see the
-[Tekton Documentation Contributor's Guide](https://github.com/tektoncd/website/blob/main/content/en/doc-con-main.md).
+[Tekton Documentation Contributor's Guide](https://github.com/tektoncd/website/blob/main/content/en/docs/Contribute/_index.md).
 
 This guide describes:
 - The contribution process for documentation

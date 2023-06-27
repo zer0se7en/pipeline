@@ -26,14 +26,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/random"
-	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
+	pipelinev1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
 	remotetest "github.com/tektoncd/pipeline/test"
+	"github.com/tektoncd/pipeline/test/diff"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	fakeclient "k8s.io/client-go/kubernetes/fake"
@@ -109,9 +111,9 @@ func TestGetImageWithImagePullSecrets(t *testing.T) {
 		t.Errorf("Parsing url with an error: %v", err)
 	}
 
-	task := &v1beta1.Task{
+	task := &pipelinev1.Task{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "tekton.dev/v1beta1",
+			APIVersion: "tekton.dev/v1",
 			Kind:       "Task"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "test-create-image"},
@@ -171,17 +173,16 @@ func TestGetImageWithImagePullSecrets(t *testing.T) {
 				t.Errorf("Creating entrypointCache with an error: %v", err)
 			}
 
-			i, err := entrypointCache.get(ctx, imgRef, nameSpace, "", tc.imagePullSecrets)
+			i, err := entrypointCache.get(ctx, imgRef, nameSpace, "", tc.imagePullSecrets, true)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("get() = %+v, %v, wantErr %t", i, err, tc.wantErr)
 			}
-
 		})
-
 	}
 }
 
 func mustRandomImage(t *testing.T) v1.Image {
+	t.Helper()
 	img, err := random.Image(10, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -196,6 +197,7 @@ func TestBuildCommandMap(t *testing.T) {
 		desc    string
 		idx     v1.ImageIndex
 		wantErr bool
+		want    map[string][]string
 	}{{
 		// Valid multi-platform image even though some platforms only differ by variant or osversion.
 		desc: "valid index",
@@ -225,6 +227,13 @@ func TestBuildCommandMap(t *testing.T) {
 				Platform: &v1.Platform{OS: "windows", Architecture: "amd64", OSVersion: "4.5.6"},
 			},
 		}),
+		want: map[string][]string{
+			"linux/amd64":         nil,
+			"linux/arm64/7":       nil,
+			"linux/arm64/8":       nil,
+			"windows/amd64:1.2.3": nil,
+			"windows/amd64:4.5.6": nil,
+		},
 	}, {
 		desc: "valid index, with dupes",
 		idx: mutate.AppendManifests(empty.Index, mutate.IndexAddendum{
@@ -238,6 +247,9 @@ func TestBuildCommandMap(t *testing.T) {
 				Platform: &v1.Platform{OS: "linux", Architecture: "amd64"},
 			},
 		}),
+		want: map[string][]string{
+			"linux/amd64": nil,
+		},
 	}, {
 		desc: "invalid index, dupes with different digests",
 		idx: mutate.AppendManifests(empty.Index, mutate.IndexAddendum{
@@ -252,12 +264,84 @@ func TestBuildCommandMap(t *testing.T) {
 			},
 		}),
 		wantErr: true,
+	}, {
+		desc: "valid index, with unknown platform",
+		idx: mutate.AppendManifests(empty.Index, mutate.IndexAddendum{
+			Add: img,
+			Descriptor: v1.Descriptor{
+				Platform: &v1.Platform{OS: "linux", Architecture: "amd64"},
+			},
+		}, mutate.IndexAddendum{
+			Add: img,
+			Descriptor: v1.Descriptor{
+				Platform: &v1.Platform{OS: "unknown", Architecture: "unknown"},
+			},
+		}),
+		want: map[string][]string{
+			"linux/amd64": nil,
+		},
+	}, {
+		desc: "valid index, only unknown platform",
+		idx: mutate.AppendManifests(empty.Index, mutate.IndexAddendum{
+			Add: img,
+			Descriptor: v1.Descriptor{
+				Platform: &v1.Platform{OS: "unknown", Architecture: "unknown"},
+			},
+		}),
+		want: map[string][]string{},
 	}} {
 		t.Run(c.desc, func(t *testing.T) {
-			_, err := buildCommandMap(c.idx)
+			got, err := buildCommandMap(c.idx, true)
 			gotErr := (err != nil)
 			if gotErr != c.wantErr {
 				t.Fatalf("got err: %v, want err: %t", err, c.wantErr)
+			}
+			if d := cmp.Diff(c.want, got); d != "" && !c.wantErr {
+				t.Errorf("Diff %s", diff.PrintWantGot(d))
+			}
+		})
+	}
+}
+
+func mustConfig(t *testing.T, cfg v1.Config) v1.Image {
+	t.Helper()
+	img, err := mutate.Config(empty.Image, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return img
+}
+
+func TestImageInfo(t *testing.T) {
+	for _, c := range []struct {
+		desc    string
+		img     v1.Image
+		hasArgs bool
+		wantCmd []string
+	}{{
+		desc:    "entrypoint-cmd-and-args",
+		hasArgs: true,
+		img: mustConfig(t, v1.Config{
+			Entrypoint: []string{"my", "entrypoint"},
+			Cmd:        []string{"my", "cmd"},
+		}),
+		wantCmd: []string{"my", "entrypoint"},
+	}, {
+		desc:    "entrypoint-cmd-and-no-args",
+		hasArgs: false,
+		img: mustConfig(t, v1.Config{
+			Entrypoint: []string{"my", "entrypoint"},
+			Cmd:        []string{"my", "cmd"},
+		}),
+		wantCmd: []string{"my", "entrypoint", "my", "cmd"},
+	}} {
+		t.Run(c.desc, func(t *testing.T) {
+			cmd, _, err := imageInfo(c.img, c.hasArgs)
+			if err != nil {
+				t.Fatalf("got err: %v", err)
+			}
+			if d := cmp.Diff(c.wantCmd, cmd); d != "" {
+				t.Errorf("Diff cmd %s", diff.PrintWantGot(d))
 			}
 		})
 	}

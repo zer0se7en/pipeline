@@ -1,3 +1,4 @@
+//go:build e2e && windows_e2e
 // +build e2e,windows_e2e
 
 /*
@@ -20,13 +21,13 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/tektoncd/pipeline/test/parse"
-
 	"github.com/google/go-cmp/cmp"
-	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
+	v1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
+	"github.com/tektoncd/pipeline/test/parse"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	knativetest "knative.dev/pkg/test"
+	"knative.dev/pkg/test/helpers"
 )
 
 func TestWindowsScript(t *testing.T) {
@@ -40,10 +41,10 @@ func TestWindowsScript(t *testing.T) {
 	knativetest.CleanupOnInterrupt(func() { tearDown(ctx, t, c, namespace) }, t.Logf)
 	defer tearDown(ctx, t, c, namespace)
 
-	taskRunName := "windows-script-taskrun"
+	taskRunName := helpers.ObjectNameForTest(t)
 	t.Logf("Creating TaskRun in namespace %s", namespace)
 
-	taskRun := parse.MustParseTaskRun(t, fmt.Sprintf(`
+	taskRun := parse.MustParseV1TaskRun(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
@@ -62,21 +63,21 @@ spec:
         #!win
         echo Hello
 `, taskRunName, namespace))
-	if _, err := c.TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create TaskRun: %s", err)
 	}
 
 	t.Logf("Waiting for TaskRun in namespace %s to finish", namespace)
-	if err := WaitForTaskRunState(ctx, c, taskRunName, TaskRunSucceed(taskRunName), "TaskRunSucceeded"); err != nil {
+	if err := WaitForTaskRunState(ctx, c, taskRunName, TaskRunSucceed(taskRunName), "TaskRunSucceeded", v1Version); err != nil {
 		t.Errorf("Error waiting for TaskRun to finish: %s", err)
 	}
 
-	taskrun, err := c.TaskRunClient.Get(ctx, taskRunName, metav1.GetOptions{})
+	taskrun, err := c.V1TaskRunClient.Get(ctx, taskRunName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Couldn't get expected TaskRun %s: %s", taskRunName, err)
 	}
 
-	expectedStepState := []v1beta1.StepState{{
+	expectedStepState := []v1.StepState{{
 		ContainerState: corev1.ContainerState{
 			Terminated: &corev1.ContainerStateTerminated{
 				ExitCode: 0,
@@ -111,10 +112,10 @@ func TestWindowsScriptFailure(t *testing.T) {
 	knativetest.CleanupOnInterrupt(func() { tearDown(ctx, t, c, namespace) }, t.Logf)
 	defer tearDown(ctx, t, c, namespace)
 
-	taskRunName := "failing-windows-taskrun"
+	taskRunName := helpers.ObjectNameForTest(t)
 	t.Logf("Creating TaskRun in namespace %s", namespace)
 
-	taskRun := parse.MustParseTaskRun(t, fmt.Sprintf(`
+	taskRun := parse.MustParseV1TaskRun(t, fmt.Sprintf(`
 metadata:
   name: %s
   namespace: %s
@@ -137,21 +138,21 @@ spec:
         #!win pwsh.exe -File
         echo Hello
 `, taskRunName, namespace))
-	if _, err := c.TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
+	if _, err := c.V1TaskRunClient.Create(ctx, taskRun, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create TaskRun: %s", err)
 	}
 
 	t.Logf("Waiting for TaskRun in namespace %s to fail", namespace)
-	if err := WaitForTaskRunState(ctx, c, taskRunName, TaskRunFailed(taskRunName), "TaskRunFailed"); err != nil {
+	if err := WaitForTaskRunState(ctx, c, taskRunName, TaskRunFailed(taskRunName), "TaskRunFailed", v1Version); err != nil {
 		t.Errorf("Error waiting for TaskRun to finish: %s", err)
 	}
 
-	taskrun, err := c.TaskRunClient.Get(ctx, taskRunName, metav1.GetOptions{})
+	taskrun, err := c.V1TaskRunClient.Get(ctx, taskRunName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("Couldn't get expected TaskRun %s: %s", taskRunName, err)
 	}
 
-	expectedStepState := []v1beta1.StepState{{
+	expectedStepState := []v1.StepState{{
 		ContainerState: corev1.ContainerState{
 			Terminated: &corev1.ContainerStateTerminated{
 				ExitCode: 0,

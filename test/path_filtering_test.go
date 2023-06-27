@@ -1,3 +1,4 @@
+//go:build examples
 // +build examples
 
 /*
@@ -98,6 +99,53 @@ func TestAlphaPathFilter(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if got := alphaPathFilter(tc.path); got != true {
 				t.Errorf("path %q: want %t got %t", tc.path, true, got)
+			}
+		})
+	}
+}
+
+func TestBetaPathFilter(t *testing.T) {
+	for _, tc := range []struct {
+		path    string
+		allowed bool
+	}{{
+		path:    "/test.yaml",
+		allowed: true,
+	}, {
+		path:    "/alpha/test.yaml",
+		allowed: false,
+	}, {
+		path:    "/beta/test.yaml",
+		allowed: true,
+	}, {
+		path:    "/foo/test.yaml",
+		allowed: true,
+	}, {
+		path:    "/v1alpha1/taskruns/test.yaml",
+		allowed: true,
+	}, {
+		path:    "/v1alpha1/taskruns/alpha/test.yaml",
+		allowed: false,
+	}, {
+		path:    "/v1beta1/taskruns/test.yaml",
+		allowed: true,
+	}, {
+		path:    "/v1beta1/taskruns/alpha/test.yaml",
+		allowed: false,
+	}, {
+		path:    "/v1beta1/taskruns/alpha/test.yaml",
+		allowed: false,
+	}, {
+		path:    "/v1alpha1/pipelineruns/beta/test.yaml",
+		allowed: true,
+	}, {
+		path:    "/v1alpha1/pipelineruns/beta/test.yaml",
+		allowed: true,
+	}} {
+		name := strings.Replace(tc.path, "/", " ", -1)
+		t.Run(name, func(t *testing.T) {
+			if got := betaPathFilter(tc.path); got != tc.allowed {
+				t.Errorf("path %q: want %t got %t", tc.path, tc.allowed, got)
 			}
 		})
 	}

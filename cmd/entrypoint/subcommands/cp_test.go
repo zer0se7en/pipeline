@@ -18,22 +18,17 @@ package subcommands
 
 import (
 	"errors"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
 func TestCp(t *testing.T) {
-	tmp, err := ioutil.TempDir("", "cp-test-*")
-	if err != nil {
-		t.Fatalf("error creating temp directory: %v", err)
-	}
-	defer os.RemoveAll(tmp)
+	tmp := t.TempDir()
 	src := filepath.Join(tmp, "foo.txt")
 	dst := filepath.Join(tmp, "bar.txt")
 
-	if err = ioutil.WriteFile(src, []byte("hello world"), 0700); err != nil {
+	if err := os.WriteFile(src, []byte("hello world"), 0700); err != nil {
 		t.Fatalf("error writing source file: %v", err)
 	}
 
@@ -61,14 +56,10 @@ func TestCp(t *testing.T) {
 }
 
 func TestCpMissingFile(t *testing.T) {
-	tmp, err := ioutil.TempDir("", "cp-test-*")
-	if err != nil {
-		t.Fatalf("error creating temp directory: %v", err)
-	}
-	defer os.RemoveAll(tmp)
+	tmp := t.TempDir()
 	src := filepath.Join(tmp, "doesnt-exist.txt")
 	dst := filepath.Join(tmp, "bar.txt")
-	err = cp(src, dst)
+	err := cp(src, dst)
 	if err == nil {
 		t.Errorf("unexpected success copying missing file")
 	}

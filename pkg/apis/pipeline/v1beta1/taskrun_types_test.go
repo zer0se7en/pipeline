@@ -22,13 +22,12 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/tektoncd/pipeline/pkg/apis/pipeline"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	"github.com/tektoncd/pipeline/test/diff"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"knative.dev/pkg/apis"
-	duckv1beta1 "knative.dev/pkg/apis/duck/v1beta1"
+	duckv1 "knative.dev/pkg/apis/duck/v1"
 )
 
 func TestTaskRun_GetPipelineRunPVCName(t *testing.T) {
@@ -111,7 +110,7 @@ func TestTaskRun_HasPipelineRun(t *testing.T) {
 func TestTaskRunIsDone(t *testing.T) {
 	tr := &v1beta1.TaskRun{
 		Status: v1beta1.TaskRunStatus{
-			Status: duckv1beta1.Status{
+			Status: duckv1.Status{
 				Conditions: []apis.Condition{{
 					Type:   apis.ConditionSucceeded,
 					Status: corev1.ConditionFalse,
@@ -120,7 +119,7 @@ func TestTaskRunIsDone(t *testing.T) {
 		},
 	}
 	if !tr.IsDone() {
-		t.Fatal("Expected pipelinerun status to be done")
+		t.Fatal("Expected taskrun status to be done")
 	}
 }
 
@@ -131,7 +130,88 @@ func TestTaskRunIsCancelled(t *testing.T) {
 		},
 	}
 	if !tr.IsCancelled() {
+		t.Fatal("Expected taskrun status to be cancelled")
+	}
+}
+
+func TestTaskRunIsCancelledWithMessage(t *testing.T) {
+	expectedStatusMessage := "test message"
+	tr := &v1beta1.TaskRun{
+		Spec: v1beta1.TaskRunSpec{
+			Status:        v1beta1.TaskRunSpecStatusCancelled,
+			StatusMessage: v1beta1.TaskRunSpecStatusMessage(expectedStatusMessage),
+		},
+	}
+	if !tr.IsCancelled() {
 		t.Fatal("Expected pipelinerun status to be cancelled")
+	}
+
+	if string(tr.Spec.StatusMessage) != expectedStatusMessage {
+		t.Fatalf("Expected StatusMessage is %s but got %s", v1beta1.TaskRunCancelledByPipelineMsg, tr.Spec.StatusMessage)
+	}
+}
+
+func TestTaskRunIsTaskRunResultVerified(t *testing.T) {
+	tr := &v1beta1.TaskRun{
+		Status: v1beta1.TaskRunStatus{
+			Status: duckv1.Status{
+				Conditions: []apis.Condition{{
+					Type:    apis.ConditionType(v1beta1.TaskRunConditionResultsVerified.String()),
+					Status:  corev1.ConditionTrue,
+					Reason:  v1beta1.TaskRunReasonResultsVerified.String(),
+					Message: "Successfully verified all spire signed taskrun results",
+				}},
+			},
+		},
+	}
+	if !tr.IsTaskRunResultVerified() {
+		t.Fatal("Expected pipelinerun status to be results verified")
+	}
+	if tr.Status.GetCondition(apis.ConditionType(v1beta1.TaskRunConditionResultsVerified.String())).Reason != v1beta1.TaskRunReasonResultsVerified.String() {
+		t.Fatal("Expected pipelinerun status reason to be TaskRunResultsVerified")
+	}
+}
+
+func TestTaskRunEmptyIsTaskRunResultVerified(t *testing.T) {
+	tr := &v1beta1.TaskRun{
+		Status: v1beta1.TaskRunStatus{
+			Status: duckv1.Status{},
+		},
+	}
+	if tr.IsTaskRunResultVerified() {
+		t.Fatal("Expected false as no condition exists for SignedResultsVerified")
+	}
+}
+
+func TestTaskRunIsTaskRunResultDone(t *testing.T) {
+	tr := &v1beta1.TaskRun{
+		Status: v1beta1.TaskRunStatus{
+			Status: duckv1.Status{
+				Conditions: []apis.Condition{{
+					Type:    apis.ConditionType(v1beta1.TaskRunConditionResultsVerified.String()),
+					Status:  corev1.ConditionUnknown,
+					Reason:  v1beta1.AwaitingTaskRunResults.String(),
+					Message: "Waiting upon TaskRun results and signatures to verify",
+				}},
+			},
+		},
+	}
+	if tr.IsTaskRunResultDone() {
+		t.Fatal("Expected pipelinerun status to be unknown and waiting")
+	}
+	if tr.Status.GetCondition(apis.ConditionType(v1beta1.TaskRunConditionResultsVerified.String())).Reason != v1beta1.AwaitingTaskRunResults.String() {
+		t.Fatal("Expected pipelinerun status reason to be AwaitingTaskRunResults")
+	}
+}
+
+func TestTaskRunEmptyIsTaskRunResultDone(t *testing.T) {
+	tr := &v1beta1.TaskRun{
+		Status: v1beta1.TaskRunStatus{
+			Status: duckv1.Status{},
+		},
+	}
+	if tr.IsTaskRunResultDone() {
+		t.Fatal("Expected false as no condition exists for SignedResultsVerified")
 	}
 }
 
@@ -200,47 +280,79 @@ func TestTaskRunHasStarted(t *testing.T) {
 	}
 }
 
-func TestTaskRunIsOfPipelinerun(t *testing.T) {
-	tests := []struct {
-		name                  string
-		tr                    *v1beta1.TaskRun
-		expectedValue         bool
-		expetectedPipeline    string
-		expetectedPipelineRun string
+func TestIsSuccessful(t *testing.T) {
+	tcs := []struct {
+		name    string
+		taskRun *v1beta1.TaskRun
+		want    bool
 	}{{
-		name: "yes",
-		tr: &v1beta1.TaskRun{
-			ObjectMeta: metav1.ObjectMeta{
-				Labels: map[string]string{
-					pipeline.PipelineLabelKey:    "pipeline",
-					pipeline.PipelineRunLabelKey: "pipelinerun",
-				},
-			},
-		},
-		expectedValue:         true,
-		expetectedPipeline:    "pipeline",
-		expetectedPipelineRun: "pipelinerun",
+		name: "nil taskrun",
+		want: false,
 	}, {
-		name:          "no",
-		tr:            &v1beta1.TaskRun{},
-		expectedValue: false,
+		name: "still running",
+		taskRun: &v1beta1.TaskRun{Status: v1beta1.TaskRunStatus{Status: duckv1.Status{Conditions: []apis.Condition{{
+			Type:   apis.ConditionSucceeded,
+			Status: corev1.ConditionUnknown,
+		}}}}},
+		want: false,
+	}, {
+		name: "succeeded",
+		taskRun: &v1beta1.TaskRun{Status: v1beta1.TaskRunStatus{Status: duckv1.Status{Conditions: []apis.Condition{{
+			Type:   apis.ConditionSucceeded,
+			Status: corev1.ConditionTrue,
+		}}}}},
+		want: true,
+	}, {
+		name: "failed",
+		taskRun: &v1beta1.TaskRun{Status: v1beta1.TaskRunStatus{Status: duckv1.Status{Conditions: []apis.Condition{{
+			Type:   apis.ConditionSucceeded,
+			Status: corev1.ConditionFalse,
+		}}}}},
+		want: false,
 	}}
+	for _, tc := range tcs {
+		got := tc.taskRun.IsSuccessful()
+		if tc.want != got {
+			t.Errorf("wanted isSuccessful to be %t but was %t", tc.want, got)
+		}
+	}
+}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			value, pipeline, pipelineRun := test.tr.IsPartOfPipeline()
-			if value != test.expectedValue {
-				t.Fatalf("Expecting %v got %v", test.expectedValue, value)
-			}
-
-			if pipeline != test.expetectedPipeline {
-				t.Fatalf("Mismatch in pipeline: got %s expected %s", pipeline, test.expetectedPipeline)
-			}
-
-			if pipelineRun != test.expetectedPipelineRun {
-				t.Fatalf("Mismatch in pipelinerun: got %s expected %s", pipelineRun, test.expetectedPipelineRun)
-			}
-		})
+func TestIsFailure(t *testing.T) {
+	tcs := []struct {
+		name    string
+		taskRun *v1beta1.TaskRun
+		want    bool
+	}{{
+		name: "nil taskrun",
+		want: false,
+	}, {
+		name: "still running",
+		taskRun: &v1beta1.TaskRun{Status: v1beta1.TaskRunStatus{Status: duckv1.Status{Conditions: []apis.Condition{{
+			Type:   apis.ConditionSucceeded,
+			Status: corev1.ConditionUnknown,
+		}}}}},
+		want: false,
+	}, {
+		name: "succeeded",
+		taskRun: &v1beta1.TaskRun{Status: v1beta1.TaskRunStatus{Status: duckv1.Status{Conditions: []apis.Condition{{
+			Type:   apis.ConditionSucceeded,
+			Status: corev1.ConditionTrue,
+		}}}}},
+		want: false,
+	}, {
+		name: "failed",
+		taskRun: &v1beta1.TaskRun{Status: v1beta1.TaskRunStatus{Status: duckv1.Status{Conditions: []apis.Condition{{
+			Type:   apis.ConditionSucceeded,
+			Status: corev1.ConditionFalse,
+		}}}}},
+		want: true,
+	}}
+	for _, tc := range tcs {
+		got := tc.taskRun.IsFailure()
+		if tc.want != got {
+			t.Errorf("wanted isFailure to be %t but was %t", tc.want, got)
+		}
 	}
 }
 
@@ -255,7 +367,7 @@ func TestHasTimedOut(t *testing.T) {
 		name: "TaskRun not started",
 		taskRun: &v1beta1.TaskRun{
 			Status: v1beta1.TaskRunStatus{
-				Status: duckv1beta1.Status{
+				Status: duckv1.Status{
 					Conditions: []apis.Condition{{
 						Type:   apis.ConditionSucceeded,
 						Status: corev1.ConditionFalse,
@@ -276,7 +388,7 @@ func TestHasTimedOut(t *testing.T) {
 				},
 			},
 			Status: v1beta1.TaskRunStatus{
-				Status: duckv1beta1.Status{
+				Status: duckv1.Status{
 					Conditions: []apis.Condition{{
 						Type:   apis.ConditionSucceeded,
 						Status: corev1.ConditionFalse,
@@ -297,7 +409,7 @@ func TestHasTimedOut(t *testing.T) {
 				},
 			},
 			Status: v1beta1.TaskRunStatus{
-				Status: duckv1beta1.Status{
+				Status: duckv1.Status{
 					Conditions: []apis.Condition{{
 						Type:   apis.ConditionSucceeded,
 						Status: corev1.ConditionFalse,
@@ -313,7 +425,7 @@ func TestHasTimedOut(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := tc.taskRun.HasTimedOut(context.Background(), testClock{})
+			result := tc.taskRun.HasTimedOut(context.Background(), testClock)
 			if d := cmp.Diff(result, tc.expectedStatus); d != "" {
 				t.Fatalf(diff.PrintWantGot(d))
 			}
@@ -352,5 +464,53 @@ func TestInitializeTaskRunConditions(t *testing.T) {
 	newCondition := tr.Status.GetCondition(apis.ConditionSucceeded)
 	if newCondition.Reason != "not just started" {
 		t.Fatalf("PipelineRun initialize reset the condition reason to %s", newCondition.Reason)
+	}
+}
+
+func TestTaskRunIsRetriable(t *testing.T) {
+	retryStatus := v1beta1.TaskRunStatus{}
+	retryStatus.SetCondition(&apis.Condition{
+		Type:   apis.ConditionSucceeded,
+		Status: corev1.ConditionFalse,
+		Reason: string(v1beta1.TaskRunReasonTimedOut),
+	})
+
+	for _, tc := range []struct {
+		name             string
+		retries          int
+		numRetriesStatus int
+		wantIsRetriable  bool
+	}{{
+		name:            "0 retriesStatus, 1 retries, retriable",
+		retries:         1,
+		wantIsRetriable: true,
+	}, {
+		name:             "1 retriesStatus, 1 retries, not retriable",
+		retries:          1,
+		numRetriesStatus: 1,
+		wantIsRetriable:  false,
+	}, {
+		name:            "0 retriesStatus, 0 retries, not retriable",
+		wantIsRetriable: false,
+	}} {
+		retriesStatus := []v1beta1.TaskRunStatus{}
+		for i := 0; i < tc.numRetriesStatus; i++ {
+			retriesStatus = append(retriesStatus, retryStatus)
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			tr := &v1beta1.TaskRun{
+				Spec: v1beta1.TaskRunSpec{
+					Retries: tc.retries,
+				},
+				Status: v1beta1.TaskRunStatus{
+					TaskRunStatusFields: v1beta1.TaskRunStatusFields{
+						RetriesStatus: retriesStatus,
+					},
+				},
+			}
+			if tr.IsRetriable() != tc.wantIsRetriable {
+				t.Errorf("tr.isRetriable(): %v, want %v", tr.IsRetriable(), tc.wantIsRetriable)
+			}
+		})
 	}
 }

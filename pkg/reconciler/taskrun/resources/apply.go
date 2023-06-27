@@ -22,18 +22,33 @@ import (
 	"path/filepath"
 	"strconv"
 
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
-
 	"github.com/tektoncd/pipeline/pkg/apis/config"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline"
-	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
+	v1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
+	"github.com/tektoncd/pipeline/pkg/container"
 	"github.com/tektoncd/pipeline/pkg/pod"
 	"github.com/tektoncd/pipeline/pkg/substitution"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
+)
+
+const (
+	// objectIndividualVariablePattern is the reference pattern for object individual keys params.<object_param_name>.<key_name>
+	objectIndividualVariablePattern = "params.%s.%s"
+)
+
+var (
+	paramPatterns = []string{
+		"params.%s",
+		"params[%q]",
+		"params['%s']",
+		// FIXME(vdemeester) Remove that with deprecating v1beta1
+		"inputs.params.%s",
+	}
 )
 
 // ApplyParameters applies the params from a TaskRun.Input.Parameters to a TaskSpec
-func ApplyParameters(spec *v1beta1.TaskSpec, tr *v1beta1.TaskRun, defaults ...v1beta1.ParamSpec) *v1beta1.TaskSpec {
+func ApplyParameters(ctx context.Context, spec *v1.TaskSpec, tr *v1.TaskRun, defaults ...v1.ParamSpec) *v1.TaskSpec {
 	// This assumes that the TaskRun inputs have been validated against what the Task requests.
 
 	// stringReplacements is used for standard single-string stringReplacements, while arrayReplacements contains arrays
@@ -41,91 +56,93 @@ func ApplyParameters(spec *v1beta1.TaskSpec, tr *v1beta1.TaskRun, defaults ...v1
 	stringReplacements := map[string]string{}
 	arrayReplacements := map[string][]string{}
 
-	patterns := []string{
-		"params.%s",
-		"params[%q]",
-		"params['%s']",
-		// FIXME(vdemeester) Remove that with deprecating v1beta1
-		"inputs.params.%s",
-	}
-
 	// Set all the default stringReplacements
 	for _, p := range defaults {
 		if p.Default != nil {
-			if p.Default.Type == v1beta1.ParamTypeString {
-				for _, pattern := range patterns {
-					stringReplacements[fmt.Sprintf(pattern, p.Name)] = p.Default.StringVal
-				}
-			} else {
-				for _, pattern := range patterns {
+			switch p.Default.Type {
+			case v1.ParamTypeArray:
+				for _, pattern := range paramPatterns {
+					for i := 0; i < len(p.Default.ArrayVal); i++ {
+						stringReplacements[fmt.Sprintf(pattern+"[%d]", p.Name, i)] = p.Default.ArrayVal[i]
+					}
 					arrayReplacements[fmt.Sprintf(pattern, p.Name)] = p.Default.ArrayVal
+				}
+			case v1.ParamTypeObject:
+				for k, v := range p.Default.ObjectVal {
+					stringReplacements[fmt.Sprintf(objectIndividualVariablePattern, p.Name, k)] = v
+				}
+			case v1.ParamTypeString:
+				fallthrough
+			default:
+				for _, pattern := range paramPatterns {
+					stringReplacements[fmt.Sprintf(pattern, p.Name)] = p.Default.StringVal
 				}
 			}
 		}
 	}
 	// Set and overwrite params with the ones from the TaskRun
-	for _, p := range tr.Spec.Params {
-		if p.Value.Type == v1beta1.ParamTypeString {
-			for _, pattern := range patterns {
-				stringReplacements[fmt.Sprintf(pattern, p.Name)] = p.Value.StringVal
-			}
-		} else {
-			for _, pattern := range patterns {
-				arrayReplacements[fmt.Sprintf(pattern, p.Name)] = p.Value.ArrayVal
-			}
-		}
+	trStrings, trArrays := paramsFromTaskRun(ctx, tr)
+	for k, v := range trStrings {
+		stringReplacements[k] = v
 	}
+	for k, v := range trArrays {
+		arrayReplacements[k] = v
+	}
+
 	return ApplyReplacements(spec, stringReplacements, arrayReplacements)
 }
 
-// ApplyResources applies the substitution from values in resources which are referenced in spec as subitems
-// of the replacementStr.
-func ApplyResources(spec *v1beta1.TaskSpec, resolvedResources map[string]v1beta1.PipelineResourceInterface, replacementStr string) *v1beta1.TaskSpec {
-	replacements := map[string]string{}
-	for name, r := range resolvedResources {
-		for k, v := range r.Replacements() {
-			replacements[fmt.Sprintf("resources.%s.%s.%s", replacementStr, name, k)] = v
-			// FIXME(vdemeester) Remove that with deprecating v1beta1
-			replacements[fmt.Sprintf("%s.resources.%s.%s", replacementStr, name, k)] = v
+func paramsFromTaskRun(ctx context.Context, tr *v1.TaskRun) (map[string]string, map[string][]string) {
+	// stringReplacements is used for standard single-string stringReplacements, while arrayReplacements contains arrays
+	// that need to be further processed.
+	stringReplacements := map[string]string{}
+	arrayReplacements := map[string][]string{}
+
+	for _, p := range tr.Spec.Params {
+		switch p.Value.Type {
+		case v1.ParamTypeArray:
+			for _, pattern := range paramPatterns {
+				for i := 0; i < len(p.Value.ArrayVal); i++ {
+					stringReplacements[fmt.Sprintf(pattern+"[%d]", p.Name, i)] = p.Value.ArrayVal[i]
+				}
+				arrayReplacements[fmt.Sprintf(pattern, p.Name)] = p.Value.ArrayVal
+			}
+		case v1.ParamTypeObject:
+			for k, v := range p.Value.ObjectVal {
+				stringReplacements[fmt.Sprintf(objectIndividualVariablePattern, p.Name, k)] = v
+			}
+		case v1.ParamTypeString:
+			fallthrough
+		default:
+			for _, pattern := range paramPatterns {
+				stringReplacements[fmt.Sprintf(pattern, p.Name)] = p.Value.StringVal
+			}
 		}
 	}
 
-	// We always add replacements for 'path'
-	if spec.Resources != nil && spec.Resources.Inputs != nil {
-		for _, r := range spec.Resources.Inputs {
-			replacements[fmt.Sprintf("resources.inputs.%s.path", r.Name)] = v1beta1.InputResourcePath(r.ResourceDeclaration)
-			// FIXME(vdemeester) Remove that with deprecating v1beta1
-			replacements[fmt.Sprintf("inputs.resources.%s.path", r.Name)] = v1beta1.InputResourcePath(r.ResourceDeclaration)
-		}
-	}
-	if spec.Resources != nil && spec.Resources.Outputs != nil {
-		for _, r := range spec.Resources.Outputs {
-			replacements[fmt.Sprintf("resources.outputs.%s.path", r.Name)] = v1beta1.OutputResourcePath(r.ResourceDeclaration)
-			// FIXME(vdemeester) Remove that with deprecating v1beta1
-			replacements[fmt.Sprintf("outputs.resources.%s.path", r.Name)] = v1beta1.OutputResourcePath(r.ResourceDeclaration)
-		}
-	}
-
-	return ApplyReplacements(spec, replacements, map[string][]string{})
+	return stringReplacements, arrayReplacements
 }
 
-// ApplyContexts applies the substitution from $(context.(taskRun|task).*) with the specified values.
-// Uses "" as a default if a value is not available.
-func ApplyContexts(spec *v1beta1.TaskSpec, taskName string, tr *v1beta1.TaskRun) *v1beta1.TaskSpec {
-	replacements := map[string]string{
+func getContextReplacements(taskName string, tr *v1.TaskRun) map[string]string {
+	return map[string]string{
 		"context.taskRun.name":      tr.Name,
 		"context.task.name":         taskName,
 		"context.taskRun.namespace": tr.Namespace,
 		"context.taskRun.uid":       string(tr.ObjectMeta.UID),
 		"context.task.retry-count":  strconv.Itoa(len(tr.Status.RetriesStatus)),
 	}
-	return ApplyReplacements(spec, replacements, map[string][]string{})
+}
+
+// ApplyContexts applies the substitution from $(context.(taskRun|task).*) with the specified values.
+// Uses "" as a default if a value is not available.
+func ApplyContexts(spec *v1.TaskSpec, taskName string, tr *v1.TaskRun) *v1.TaskSpec {
+	return ApplyReplacements(spec, getContextReplacements(taskName, tr), map[string][]string{})
 }
 
 // ApplyWorkspaces applies the substitution from paths that the workspaces in declarations mounted to, the
 // volumes that bindings are realized with in the task spec and the PersistentVolumeClaim names for the
 // workspaces.
-func ApplyWorkspaces(ctx context.Context, spec *v1beta1.TaskSpec, declarations []v1beta1.WorkspaceDeclaration, bindings []v1beta1.WorkspaceBinding, vols map[string]corev1.Volume) *v1beta1.TaskSpec {
+func ApplyWorkspaces(ctx context.Context, spec *v1.TaskSpec, declarations []v1.WorkspaceDeclaration, bindings []v1.WorkspaceBinding, vols map[string]corev1.Volume) *v1.TaskSpec {
 	stringReplacements := map[string]string{}
 
 	bindNames := sets.NewString()
@@ -166,7 +183,7 @@ func ApplyWorkspaces(ctx context.Context, spec *v1beta1.TaskSpec, declarations [
 // it in the fields of the TaskSpec. A new updated TaskSpec is returned. Steps or Sidecars in the TaskSpec
 // that override the mountPath will receive that mountPath in place of the variable's value. Other Steps and
 // Sidecars will see either the workspace's declared mountPath or the default of /workspaces/<name>.
-func applyWorkspaceMountPath(variable string, spec *v1beta1.TaskSpec, declaration v1beta1.WorkspaceDeclaration) *v1beta1.TaskSpec {
+func applyWorkspaceMountPath(variable string, spec *v1.TaskSpec, declaration v1.WorkspaceDeclaration) *v1.TaskSpec {
 	stringReplacements := map[string]string{variable: ""}
 	emptyArrayReplacements := map[string][]string{}
 	defaultMountPath := declaration.GetMountPath()
@@ -176,7 +193,7 @@ func applyWorkspaceMountPath(variable string, spec *v1beta1.TaskSpec, declaratio
 		for _, usage := range step.Workspaces {
 			if usage.Name == declaration.Name && usage.MountPath != "" {
 				stringReplacements[variable] = usage.MountPath
-				v1beta1.ApplyStepReplacements(step, stringReplacements, emptyArrayReplacements)
+				container.ApplyStepReplacements(step, stringReplacements, emptyArrayReplacements)
 			}
 		}
 	}
@@ -186,7 +203,7 @@ func applyWorkspaceMountPath(variable string, spec *v1beta1.TaskSpec, declaratio
 		for _, usage := range sidecar.Workspaces {
 			if usage.Name == declaration.Name && usage.MountPath != "" {
 				stringReplacements[variable] = usage.MountPath
-				v1beta1.ApplySidecarReplacements(sidecar, stringReplacements, emptyArrayReplacements)
+				container.ApplySidecarReplacements(sidecar, stringReplacements, emptyArrayReplacements)
 			}
 		}
 	}
@@ -198,7 +215,7 @@ func applyWorkspaceMountPath(variable string, spec *v1beta1.TaskSpec, declaratio
 
 // ApplyTaskResults applies the substitution from values in results which are referenced in spec as subitems
 // of the replacementStr.
-func ApplyTaskResults(spec *v1beta1.TaskSpec) *v1beta1.TaskSpec {
+func ApplyTaskResults(spec *v1.TaskSpec) *v1.TaskSpec {
 	stringReplacements := map[string]string{}
 
 	patterns := []string{
@@ -217,7 +234,7 @@ func ApplyTaskResults(spec *v1beta1.TaskSpec) *v1beta1.TaskSpec {
 
 // ApplyStepExitCodePath replaces the occurrences of exitCode path with the absolute tekton internal path
 // Replace $(steps.<step-name>.exitCode.path) with pipeline.StepPath/<step-name>/exitCode
-func ApplyStepExitCodePath(spec *v1beta1.TaskSpec) *v1beta1.TaskSpec {
+func ApplyStepExitCodePath(spec *v1.TaskSpec) *v1.TaskSpec {
 	stringReplacements := map[string]string{}
 
 	for i, step := range spec.Steps {
@@ -229,7 +246,7 @@ func ApplyStepExitCodePath(spec *v1beta1.TaskSpec) *v1beta1.TaskSpec {
 
 // ApplyCredentialsPath applies a substitution of the key $(credentials.path) with the path that credentials
 // from annotated secrets are written to.
-func ApplyCredentialsPath(spec *v1beta1.TaskSpec, path string) *v1beta1.TaskSpec {
+func ApplyCredentialsPath(spec *v1.TaskSpec, path string) *v1.TaskSpec {
 	stringReplacements := map[string]string{
 		"credentials.path": path,
 	}
@@ -237,18 +254,18 @@ func ApplyCredentialsPath(spec *v1beta1.TaskSpec, path string) *v1beta1.TaskSpec
 }
 
 // ApplyReplacements replaces placeholders for declared parameters with the specified replacements.
-func ApplyReplacements(spec *v1beta1.TaskSpec, stringReplacements map[string]string, arrayReplacements map[string][]string) *v1beta1.TaskSpec {
+func ApplyReplacements(spec *v1.TaskSpec, stringReplacements map[string]string, arrayReplacements map[string][]string) *v1.TaskSpec {
 	spec = spec.DeepCopy()
 
 	// Apply variable expansion to steps fields.
 	steps := spec.Steps
 	for i := range steps {
-		v1beta1.ApplyStepReplacements(&steps[i], stringReplacements, arrayReplacements)
+		container.ApplyStepReplacements(&steps[i], stringReplacements, arrayReplacements)
 	}
 
 	// Apply variable expansion to stepTemplate fields.
 	if spec.StepTemplate != nil {
-		v1beta1.ApplyStepReplacements(&v1beta1.Step{Container: *spec.StepTemplate}, stringReplacements, arrayReplacements)
+		container.ApplyStepTemplateReplacements(spec.StepTemplate, stringReplacements, arrayReplacements)
 	}
 
 	// Apply variable expansion to the build's volumes
@@ -303,7 +320,7 @@ func ApplyReplacements(spec *v1beta1.TaskSpec, stringReplacements map[string]str
 	// Apply variable substitution to the sidecar definitions
 	sidecars := spec.Sidecars
 	for i := range sidecars {
-		v1beta1.ApplySidecarReplacements(&sidecars[i], stringReplacements, arrayReplacements)
+		container.ApplySidecarReplacements(&sidecars[i], stringReplacements, arrayReplacements)
 	}
 
 	return spec

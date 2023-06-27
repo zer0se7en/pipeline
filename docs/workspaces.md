@@ -1,9 +1,10 @@
 <!--
 ---
 linkTitle: "Workspaces"
-weight: 600
+weight: 405
 ---
 -->
+
 # Workspaces
 
 - [Overview](#overview)
@@ -380,6 +381,12 @@ significantly. We do not recommend using them in clusters larger than several hu
 node in the cluster must have an appropriate label matching `topologyKey`. If some or all nodes
 are missing the specified `topologyKey` label, it can lead to unintended behavior.
 
+**Note:** Any time during the execution of a `pipelineRun`, if the node with a placeholder Affinity Assistant pod and
+the `taskRun` pods sharing a `workspace` is `cordoned` or disabled for scheduling anything new (`tainted`), the
+`pipelineRun` controller deletes the placeholder pod. The `taskRun` pods on a `cordoned` node continues running
+until completion. The deletion of a placeholder pod triggers creating a new placeholder pod on any available node
+such that the rest of the `pipelineRun` can continue without any disruption until it finishes.
+
 #### Specifying `Workspaces` in `PipelineRuns`
 
 For a `PipelineRun` to execute a `Pipeline` that includes one or more `Workspaces`, it needs to
@@ -510,6 +517,61 @@ workspaces:
   - name: myworkspace
     secret:
       secretName: my-secret
+```
+
+##### `projected`
+
+The `projected` field references a [`projected` volume](https://kubernetes.io/docs/concepts/storage/projected-volumes).
+`projected` volume workspaces are a [beta feature](./additional-configs.md#beta-features).
+Using a `projected` volume has the following limitations:
+
+- `projected` volume sources are always mounted as read-only. `Steps` cannot write to them and will error out if they try.
+- The volumes you want to project as a `Workspace` must exist prior to submitting the `TaskRun`.
+- The following volumes can be projected: `configMap`, `secret`, `serviceAccountToken` and `downwardApi`
+
+```yaml
+workspaces:
+  - name: myworkspace
+    projected:
+      sources:
+        - configMap:
+            name: my-configmap
+        - secret:
+            name: my-secret
+```
+
+##### `csi`
+
+The `csi` field references a [`csi` volume](https://kubernetes.io/docs/concepts/storage/volumes/#csi).
+`csi` workspaces are a [beta feature](./additional-configs.md#beta-features).
+Using a `csi` volume has the following limitations:
+
+- `csi` volume sources require a volume driver to use, which must correspond to the value by the CSI driver as defined in the [CSI spec](https://github.com/container-storage-interface/spec/blob/master/spec.md#getplugininfo).
+
+```yaml
+workspaces:
+  - name: my-credentials
+    csi:
+      driver: secrets-store.csi.k8s.io
+      readOnly: true
+      volumeAttributes:
+        secretProviderClass: "vault-database"
+```
+
+Example of CSI workspace using Hashicorp Vault:
+
+- Install the required csi driver. eg. [secrets-store-csi-driver](https://github.com/hashicorp/vault-csi-provider#using-yaml)
+- Install the `vault` Provider onto the kubernetes cluster. [Reference](https://learn.hashicorp.com/tutorials/vault/kubernetes-raft-deployment-guide)
+- Deploy a provider via [example](https://gist.github.com/JeromeJu/cc8e4e758029b6694806604750b8911c)
+- Create a SecretProviderClass Provider using the following [yaml](https://github.com/tektoncd/pipeline/blob/main/examples/v1beta1/pipelineruns/no-ci/csi-workspace.yaml#L1-L19)
+- Specify the ServiceAccount via vault:
+
+```
+vault write auth/kubernetes/role/database \
+bound_service_account_names=default \
+bound_service_account_namespaces=default \
+policies=internal-app \
+ttl=20m
 ```
 
 If you need support for a `VolumeSource` type not listed above, [open an issue](https://github.com/tektoncd/pipeline/issues) or

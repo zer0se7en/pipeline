@@ -1,3 +1,4 @@
+//go:build e2e
 // +build e2e
 
 /*
@@ -7,7 +8,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -27,6 +28,7 @@ import (
 )
 
 func withRegistry(ctx context.Context, t *testing.T, c *clients, namespace string) {
+	t.Helper()
 	deployment := getRegistryDeployment(namespace)
 	if _, err := c.KubeClient.AppsV1().Deployments(namespace).Create(ctx, deployment, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create the local registry deployment: %v", err)

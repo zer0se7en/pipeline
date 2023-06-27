@@ -1,7 +1,22 @@
+/*
+Copyright 2023 The Tekton Authors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package credentials
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,8 +25,7 @@ import (
 const credContents string = "hello, world!"
 
 func TestTryCopyCredDir(t *testing.T) {
-	dir, cleanup := createTempDir(t)
-	defer cleanup()
+	dir := t.TempDir()
 
 	fakeCredDir := filepath.Join(dir, ".docker")
 	err := os.Mkdir(fakeCredDir, 0700)
@@ -29,7 +43,7 @@ func TestTryCopyCredDir(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(destination, credFilename)); err != nil {
 		t.Fatalf("error accessing copied credential: %v", err)
 	}
-	b, err := ioutil.ReadFile(copiedFile)
+	b, err := os.ReadFile(copiedFile)
 	if err != nil {
 		t.Fatalf("unexpected error opening copied file: %v", err)
 	}
@@ -39,8 +53,7 @@ func TestTryCopyCredDir(t *testing.T) {
 }
 
 func TestTryCopyCredFile(t *testing.T) {
-	dir, cleanup := createTempDir(t)
-	defer cleanup()
+	dir := t.TempDir()
 	fakeCredFile := writeFakeCred(t, dir, ".git-credentials", credContents)
 	destination := filepath.Join(dir, ".git-credentials-copy")
 
@@ -50,7 +63,7 @@ func TestTryCopyCredFile(t *testing.T) {
 	if _, err := os.Lstat(destination); err != nil {
 		t.Fatalf("error accessing copied credential: %v", err)
 	}
-	b, err := ioutil.ReadFile(destination)
+	b, err := os.ReadFile(destination)
 	if err != nil {
 		t.Fatalf("unexpected error opening copied file: %v", err)
 	}
@@ -60,8 +73,7 @@ func TestTryCopyCredFile(t *testing.T) {
 }
 
 func TestTryCopyCredFileMissing(t *testing.T) {
-	dir, cleanup := createTempDir(t)
-	defer cleanup()
+	dir := t.TempDir()
 	fakeCredFile := filepath.Join(dir, "foo")
 	destination := filepath.Join(dir, "foo-copy")
 
@@ -71,13 +83,14 @@ func TestTryCopyCredFileMissing(t *testing.T) {
 	if _, err := os.Lstat(destination); err != nil && !os.IsNotExist(err) {
 		t.Fatalf("error accessing copied credential: %v", err)
 	}
-	_, err := ioutil.ReadFile(destination)
+	_, err := os.ReadFile(destination)
 	if !os.IsNotExist(err) {
 		t.Fatalf("destination file exists but should not have been copied: %v", err)
 	}
 }
 
 func writeFakeCred(t *testing.T, dir, name, contents string) string {
+	t.Helper()
 	flags := os.O_RDWR | os.O_CREATE | os.O_TRUNC
 	path := filepath.Join(dir, name)
 	cred, err := os.OpenFile(path, flags, 0600)
@@ -87,16 +100,4 @@ func writeFakeCred(t *testing.T, dir, name, contents string) string {
 	_, _ = cred.Write([]byte(credContents))
 	_ = cred.Close()
 	return path
-}
-
-func createTempDir(t *testing.T) (string, func()) {
-	dir, err := ioutil.TempDir("", "cred-test-fs-")
-	if err != nil {
-		t.Fatalf("unexpected error creating temp directory: %v", err)
-	}
-	return dir, func() {
-		if err := os.RemoveAll(dir); err != nil {
-			t.Errorf("unexpected error cleaning up temp directory: %v", err)
-		}
-	}
 }

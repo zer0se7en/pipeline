@@ -17,10 +17,10 @@ limitations under the License.
 package oci_test
 
 import (
+	"context"
 	"fmt"
 	"net/http/httptest"
 	"net/url"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -38,7 +38,7 @@ import (
 
 func asIsMapper(obj runtime.Object) map[string]string {
 	annotations := map[string]string{
-		oci.TitleAnnotation: getObjectName(obj),
+		oci.TitleAnnotation: test.GetObjectName(obj),
 	}
 	if obj.GetObjectKind().GroupVersionKind().Kind != "" {
 		annotations[oci.KindAnnotation] = obj.GetObjectKind().GroupVersionKind().Kind
@@ -58,6 +58,24 @@ func TestOCIResolver(t *testing.T) {
 	u, err := url.Parse(s.URL)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	// setup to many objects in oci bundle test
+	toManyObjErr := fmt.Sprintf("contained more than the maximum %d allow objects", oci.MaximumBundleObjects)
+
+	var toManyObj []runtime.Object
+	for i := 0; i <= oci.MaximumBundleObjects; i++ {
+		name := fmt.Sprintf("%d-task", i)
+		obj := v1beta1.Task{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name,
+			},
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: "tekton.dev/v1beta1",
+				Kind:       "Task",
+			},
+		}
+		toManyObj = append(toManyObj, &obj)
 	}
 
 	testcases := []struct {
@@ -128,111 +146,11 @@ func TestOCIResolver(t *testing.T) {
 			},
 		},
 		{
-			name: "too-many-objects",
-			objs: []runtime.Object{
-				&v1beta1.Task{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "first-task",
-					},
-					TypeMeta: metav1.TypeMeta{
-						APIVersion: "tekton.dev/v1beta1",
-						Kind:       "Task",
-					},
-				},
-				&v1beta1.Task{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "second-task",
-					},
-					TypeMeta: metav1.TypeMeta{
-						APIVersion: "tekton.dev/v1beta1",
-						Kind:       "Task",
-					},
-				},
-				&v1beta1.Task{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "third-task",
-					},
-					TypeMeta: metav1.TypeMeta{
-						APIVersion: "tekton.dev/v1beta1",
-						Kind:       "Task",
-					},
-				},
-				&v1beta1.Task{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "fourth-task",
-					},
-					TypeMeta: metav1.TypeMeta{
-						APIVersion: "tekton.dev/v1beta1",
-						Kind:       "Task",
-					},
-				},
-				&v1beta1.Task{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "fifth-task",
-					},
-					TypeMeta: metav1.TypeMeta{
-						APIVersion: "tekton.dev/v1beta1",
-						Kind:       "Task",
-					},
-				},
-				&v1beta1.Task{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "sixth-task",
-					},
-					TypeMeta: metav1.TypeMeta{
-						APIVersion: "tekton.dev/v1beta1",
-						Kind:       "Task",
-					},
-				},
-				&v1beta1.Task{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "seventh-task",
-					},
-					TypeMeta: metav1.TypeMeta{
-						APIVersion: "tekton.dev/v1beta1",
-						Kind:       "Task",
-					},
-				},
-				&v1beta1.Task{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "eighth-task",
-					},
-					TypeMeta: metav1.TypeMeta{
-						APIVersion: "tekton.dev/v1beta1",
-						Kind:       "Task",
-					},
-				},
-				&v1beta1.Task{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "ninth-task",
-					},
-					TypeMeta: metav1.TypeMeta{
-						APIVersion: "tekton.dev/v1beta1",
-						Kind:       "Task",
-					},
-				},
-				&v1beta1.Task{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "tenth-task",
-					},
-					TypeMeta: metav1.TypeMeta{
-						APIVersion: "tekton.dev/v1beta1",
-						Kind:       "Task",
-					},
-				},
-				&v1beta1.Task{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "eleventh-task",
-					},
-					TypeMeta: metav1.TypeMeta{
-						APIVersion: "tekton.dev/v1beta1",
-						Kind:       "Task",
-					},
-				},
-			},
+			name:         "too-many-objects",
+			objs:         toManyObj,
 			mapper:       test.DefaultObjectAnnotationMapper,
 			listExpected: []remote.ResolvedObject{},
-			wantErr:      "contained more than the maximum 10 allow objects",
+			wantErr:      toManyObjErr,
 		},
 		{
 			name:         "single-task-no-version",
@@ -266,7 +184,7 @@ func TestOCIResolver(t *testing.T) {
 			}
 
 			resolver := oci.NewResolver(ref, authn.DefaultKeychain)
-			listActual, err := resolver.List()
+			listActual, err := resolver.List(context.Background())
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("expected error containing %q but got: %v", tc.wantErr, err)
@@ -285,7 +203,7 @@ func TestOCIResolver(t *testing.T) {
 			}
 
 			for _, obj := range tc.objs {
-				actual, err := resolver.Get(strings.ToLower(obj.GetObjectKind().GroupVersionKind().Kind), getObjectName(obj))
+				actual, refSource, err := resolver.Get(context.Background(), strings.ToLower(obj.GetObjectKind().GroupVersionKind().Kind), test.GetObjectName(obj))
 				if err != nil {
 					t.Fatalf("could not retrieve object from image: %#v", err)
 				}
@@ -293,11 +211,11 @@ func TestOCIResolver(t *testing.T) {
 				if d := cmp.Diff(actual, obj); d != "" {
 					t.Error(diff.PrintWantGot(d))
 				}
+
+				if refSource != nil {
+					t.Errorf("expected refSource is nil, but received %v", refSource)
+				}
 			}
 		})
 	}
-}
-
-func getObjectName(obj runtime.Object) string {
-	return reflect.Indirect(reflect.ValueOf(obj)).FieldByName("ObjectMeta").FieldByName("Name").String()
 }

@@ -18,6 +18,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -29,11 +30,14 @@ import (
 
 	"github.com/containerd/containerd/platforms"
 	"github.com/tektoncd/pipeline/cmd/entrypoint/subcommands"
+	featureFlags "github.com/tektoncd/pipeline/pkg/apis/config"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline"
 	"github.com/tektoncd/pipeline/pkg/credentials"
 	"github.com/tektoncd/pipeline/pkg/credentials/dockercreds"
 	"github.com/tektoncd/pipeline/pkg/credentials/gitcreds"
 	"github.com/tektoncd/pipeline/pkg/entrypoint"
+	"github.com/tektoncd/pipeline/pkg/spire"
+	"github.com/tektoncd/pipeline/pkg/spire/config"
 	"github.com/tektoncd/pipeline/pkg/termination"
 )
 
@@ -45,10 +49,15 @@ var (
 	terminationPath     = flag.String("termination_path", "/tekton/termination", "If specified, file to write upon termination")
 	results             = flag.String("results", "", "If specified, list of file names that might contain task results")
 	timeout             = flag.Duration("timeout", time.Duration(0), "If specified, sets timeout for step")
+	stdoutPath          = flag.String("stdout_path", "", "If specified, file to copy stdout to")
+	stderrPath          = flag.String("stderr_path", "", "If specified, file to copy stderr to")
 	breakpointOnFailure = flag.Bool("breakpoint_on_failure", false, "If specified, expect steps to not skip on failure")
 	onError             = flag.String("on_error", "", "Set to \"continue\" to ignore an error and continue when a container terminates with a non-zero exit code."+
 		" Set to \"stopAndFail\" to declare a failure with a step error and stop executing the rest of the steps.")
-	stepMetadataDir = flag.String("step_metadata_dir", "", "If specified, create directory to store the step metadata e.g. /tekton/steps/<step-name>/")
+	stepMetadataDir        = flag.String("step_metadata_dir", "", "If specified, create directory to store the step metadata e.g. /tekton/steps/<step-name>/")
+	enableSpire            = flag.Bool("enable_spire", false, "If specified by configmap, this enables spire signing and verification")
+	socketPath             = flag.String("spire_socket_path", "unix:///spiffe-workload-api/spire-agent.sock", "Experimental: The SPIRE agent socket for SPIFFE workload API.")
+	resultExtractionMethod = flag.String("result_from", featureFlags.ResultExtractionMethodTerminationMessage, "The method using which to extract results from tasks. Default is using the termination message.")
 )
 
 const (
@@ -78,16 +87,22 @@ func main() {
 	gitcreds.AddFlags(flag.CommandLine)
 	dockercreds.AddFlags(flag.CommandLine)
 
-	flag.Parse()
+	// Split args with `--` for the entrypoint and what it should execute
+	args, commandArgs := extractArgs(os.Args[1:])
 
-	if err := subcommands.Process(flag.Args()); err != nil {
+	// We are using the global variable flag.CommandLine here to be able
+	// to define what args it should parse.
+	// flag.Parse() does flag.CommandLine.Parse(os.Args[1:])
+	if err := flag.CommandLine.Parse(args); err != nil {
+		os.Exit(1)
+	}
+	if err := subcommands.Process(flag.CommandLine.Args()); err != nil {
 		log.Println(err.Error())
-		switch err.(type) {
-		case subcommands.SubcommandSuccessful:
+		var ok subcommands.OK
+		if errors.As(err, &ok) {
 			return
-		default:
-			os.Exit(1)
 		}
+		os.Exit(1)
 	}
 
 	// Copy credentials we're expecting from the legacy credentials helper (creds-init)
@@ -122,20 +137,33 @@ func main() {
 		}
 	}
 
+	var spireWorkloadAPI spire.EntrypointerAPIClient
+	if enableSpire != nil && *enableSpire && socketPath != nil && *socketPath != "" {
+		spireConfig := config.SpireConfig{
+			SocketPath: *socketPath,
+		}
+		spireWorkloadAPI = spire.NewEntrypointerAPIClient(&spireConfig)
+	}
+
 	e := entrypoint.Entrypointer{
-		Command:             append(cmd, flag.Args()...),
-		WaitFiles:           strings.Split(*waitFiles, ","),
-		WaitFileContent:     *waitFileContent,
-		PostFile:            *postFile,
-		TerminationPath:     *terminationPath,
-		Waiter:              &realWaiter{waitPollingInterval: defaultWaitPollingInterval, breakpointOnFailure: *breakpointOnFailure},
-		Runner:              &realRunner{},
-		PostWriter:          &realPostWriter{},
-		Results:             strings.Split(*results, ","),
-		Timeout:             timeout,
-		BreakpointOnFailure: *breakpointOnFailure,
-		OnError:             *onError,
-		StepMetadataDir:     *stepMetadataDir,
+		Command:         append(cmd, commandArgs...),
+		WaitFiles:       strings.Split(*waitFiles, ","),
+		WaitFileContent: *waitFileContent,
+		PostFile:        *postFile,
+		TerminationPath: *terminationPath,
+		Waiter:          &realWaiter{waitPollingInterval: defaultWaitPollingInterval, breakpointOnFailure: *breakpointOnFailure},
+		Runner: &realRunner{
+			stdoutPath: *stdoutPath,
+			stderrPath: *stderrPath,
+		},
+		PostWriter:             &realPostWriter{},
+		Results:                strings.Split(*results, ","),
+		Timeout:                timeout,
+		BreakpointOnFailure:    *breakpointOnFailure,
+		OnError:                *onError,
+		StepMetadataDir:        *stepMetadataDir,
+		SpireWorkloadAPI:       spireWorkloadAPI,
+		ResultExtractionMethod: *resultExtractionMethod,
 	}
 
 	// Copy any creds injected by the controller into the $HOME directory of the current
@@ -146,7 +174,7 @@ func main() {
 
 	if err := e.Go(); err != nil {
 		breakpointExitPostFile := e.PostFile + breakpointExitSuffix
-		switch t := err.(type) {
+		switch t := err.(type) { //nolint:errorlint // checking for multiple types with errors.As is ugly.
 		case skipError:
 			log.Print("Skipping step because a previous step failed")
 			os.Exit(1)

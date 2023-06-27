@@ -25,11 +25,15 @@
 # to the current release, and validate whether the Tekton pipeline works.
 
 source $(git rev-parse --show-toplevel)/test/e2e-common.sh
-PREVIOUS_PIPELINE_VERSION=v0.5.2
+RELEASES='https://github.com/tektoncd/pipeline/releases/latest'
+PREVIOUS_PIPELINE_VERSION=$(curl -L -s -H 'Accept: application/json' $RELEASES |
+  sed -e 's/.*"tag_name":"\([^"]*\)".*/\1/')
 
 # Script entry point.
 
-initialize $@
+if [ "${SKIP_INITIALIZE}" != "true" ]; then
+  initialize $@
+fi
 
 header "Setting up environment"
 
@@ -61,13 +65,6 @@ uninstall_pipeline_crd_version $PREVIOUS_PIPELINE_VERSION
 # Install the previous release.
 header "Install the previous release of Tekton pipeline $PREVIOUS_PIPELINE_VERSION"
 install_pipeline_crd_version $PREVIOUS_PIPELINE_VERSION
-
-# Create the resources of taskrun and pipelinerun, under the directories example/taskrun
-# and example/pipelinerun.
-for test in taskrun pipelinerun; do
-  header "Applying the resources ${test}s"
-  apply_resources ${test}
-done
 
 # Upgrade to the current release.
 header "Upgrade to the current release of Tekton pipeline"

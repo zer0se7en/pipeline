@@ -18,28 +18,38 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
-	"os"
 	"strings"
 
-	tekton "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
-
+	tektonv1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
+	tektonv1beta1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	"k8s.io/klog"
 	"k8s.io/kube-openapi/pkg/common"
 	spec "k8s.io/kube-openapi/pkg/validation/spec"
 )
 
 func main() {
-	if len(os.Args) <= 1 {
-		klog.Fatal("Supply a version")
-	}
-	version := os.Args[1]
+	pipelinesVersion := flag.String("version", "v0.17.2", "Tekton Pipelines software version")
+	apiVersion := flag.String("apiVersion", "v1beta1", "API version")
+	flag.Parse()
+	version := *pipelinesVersion
 	if !strings.HasPrefix(version, "v") {
 		version = "v" + version
 	}
-	oAPIDefs := tekton.GetOpenAPIDefinitions(func(name string) spec.Ref {
-		return spec.MustCreateRef("#/definitions/" + common.EscapeJsonPointer(swaggify(name)))
-	})
+	var oAPIDefs map[string]common.OpenAPIDefinition
+	switch *apiVersion {
+	case "v1beta1":
+		oAPIDefs = tektonv1beta1.GetOpenAPIDefinitions(func(name string) spec.Ref {
+			return spec.MustCreateRef("#/definitions/" + common.EscapeJsonPointer(swaggify(name)))
+		})
+	case "v1":
+		oAPIDefs = tektonv1.GetOpenAPIDefinitions(func(name string) spec.Ref {
+			return spec.MustCreateRef("#/definitions/" + common.EscapeJsonPointer(swaggify(name)))
+		})
+	default:
+		panic(fmt.Sprintf("Unsupported API version: %s", *apiVersion))
+	}
 	defs := spec.Definitions{}
 	for defName, val := range oAPIDefs {
 		defs[swaggify(defName)] = val.Schema
@@ -69,6 +79,7 @@ func swaggify(name string) string {
 	name = strings.ReplaceAll(name, "./pkg/apis/pipeline/", "")
 	name = strings.ReplaceAll(name, "./pkg/apis/resource/", "")
 	name = strings.ReplaceAll(name, "github.com/tektoncd/pipeline/pkg/apis/pipeline/", "")
+	name = strings.ReplaceAll(name, "github.com/tektoncd/pipeline/pkg/apis/resolution/", "")
 	name = strings.ReplaceAll(name, "github.com/tektoncd/pipeline/pkg/apis/resource/", "")
 	name = strings.ReplaceAll(name, "k8s.io/api/core/", "")
 	name = strings.ReplaceAll(name, "k8s.io/apimachinery/pkg/apis/meta/", "")

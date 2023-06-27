@@ -14,13 +14,13 @@
 - [Status Signalling](#status-signalling)
 - [Listing Resources](#listing-resources)
 - [Detailed Resource Types - v1beta1](#detailed-resource-types---v1beta1)
-  * [`ArrayOrString`](#arrayorstring)
   * [`ContainerStateRunning`](#containerstaterunning)
   * [`ContainerStateWaiting`](#containerstatewaiting)
   * [`ContainerStateTerminated`](#containerstateterminated)
   * [`EnvVar`](#envvar)
   * [`Param`](#param)
   * [`ParamSpec`](#paramspec)
+  * [`ParamValue`](#paramvalue)
   * [`Step`](#step)
   * [`StepState`](#stepstate)
   * [`TaskResult`](#taskresult)
@@ -42,7 +42,7 @@ This document makes reference in a few places to different profiles for Tekton i
 
 The key words “MUST”, “MUST NOT”, “REQUIRED”, “SHALL”, “SHALL NOT”, “SHOULD”, “SHOULD NOT”, “RECOMMENDED”, “NOT RECOMMENDED”, “MAY”, and “OPTIONAL” are to be interpreted as described in [RFC 2119](https://tools.ietf.org/html/rfc2119).
 
-There is no formal specification of the Kubernetes API and Resource Model. This document assumes Kubernetes 1.20 behavior; this behavior will typically be supported by many future Kubernetes versions. Additionally, this document may reference specific core Kubernetes resources; these references may be illustrative (i.e. an implementation on Kubernetes) or descriptive (i.e. this Kubernetes resource MUST be exposed). References to these core Kubernetes resources will be annotated as either illustrative or descriptive.
+There is no formal specification of the Kubernetes API and Resource Model. This document assumes Kubernetes 1.24 behavior; this behavior will typically be supported by many future Kubernetes versions. Additionally, this document may reference specific core Kubernetes resources; these references may be illustrative (i.e. an implementation on Kubernetes) or descriptive (i.e. this Kubernetes resource MUST be exposed). References to these core Kubernetes resources will be annotated as either illustrative or descriptive.
 
 ## Modifying This Specification
 
@@ -186,14 +186,6 @@ List responses have the following fields (based on [`meta.v1/ListMeta`](https://
 
 ## Detailed Resource Types - v1beta1
 
-### `ArrayOrString`
-
-| Field Name  | Field Type | Requirement |
-|-------------|------------|-------------|
-| `type`      | Enum:<br>- `"string"` (default)<br>- `"array"` | REQUIRED |
-| `stringVal` | string     | REQUIRED    |
-| `arrayVal`  | []string   | REQUIRED    |
-
 ### `ContainerStateRunning`
 
 | Field Name   | Field Type | Requirement |
@@ -235,7 +227,7 @@ List responses have the following fields (based on [`meta.v1/ListMeta`](https://
 | Field Name | Field Type      | Requirement |
 |------------|-----------------|-------------|
 | `name`     | string          | REQUIRED    |
-| `value`    | `ArrayOrString` | REQUIRED    |
+| `value`    | `ParamValue`    | REQUIRED    |
 
 ### `ParamSpec`
 
@@ -243,8 +235,13 @@ List responses have the following fields (based on [`meta.v1/ListMeta`](https://
 |---------------|------------|-------------|
 | `name`        | string     | REQUIRED    |
 | `description` | string     | REQUIRED    |
-| `type`        | Enum: <br>- `"string"` (default) <br>- `"array"` | REQUIRED |
-| `default`     | `ArrayOrString` | REQUIRED |
+| `type`      | Enum:<br>- `"string"` (default)<br>- `"array"` <br>- `"object"` | REQUIRED (The values `string` and `array` for this field are REQUIRED, and the value `object` is RECOMMENDED.) |
+| `properties`  | map<string,PropertySpec> |RECOMMENDED <br><br>note: `PropertySpec` is a type that defines the spec of an individual key. See how to define the `properties` section in the [example](../examples/v1beta1/taskruns/alpha/object-param-result.yaml).|
+| `default`     | `ParamValue` | REQUIRED |
+
+### `ParamValue`
+
+A `ParamValue` may be a string, a list of string, or a map of string to string.
 
 ### `Step`
 
@@ -278,13 +275,16 @@ List responses have the following fields (based on [`meta.v1/ListMeta`](https://
 |--------------|------------|-------------|
 | `name`        | string    | REQUIRED    |
 | `description` | string    | REQUIRED    |
+| `type`      | Enum:<br>- `"string"` (default)<br>- `"array"` <br>- `"object"` | RECOMMENDED (Each of the values is RECOMMENDED.)|
+| `properties`  | map<string,PropertySpec> | RECOMMENDED <br><br>note: `PropertySpec` is a type that defines the spec of an individual key. See how to define the `properties` section in the [example](../examples/v1beta1/taskruns/alpha/object-param-result.yaml).|
 
 ### `TaskRunResult`
 
 | Field Name | Field Type | Requirement |
 |------------|------------|-------------|
 | `name`     | string     | REQUIRED    |
-| `value`    | string     | REQUIRED    |
+| `type`      | Enum:<br>- `"string"` (default)<br>- `"array"` <br>- `"object"` | RECOMMENDED (Each of the values is RECOMMENDED.) |
+| `value`    | `ParamValue`     | REQUIRED    |
 
 ### `TaskSpec`
 
